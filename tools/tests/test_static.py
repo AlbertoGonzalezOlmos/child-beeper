@@ -85,7 +85,7 @@ class TestAbsolutePaths(TempRepoTest):
         self.assertIn("main/app_main.c", findings[0].path)
 
     def test_prose_about_hardcoding_home_paths_is_not_flagged(self) -> None:
-        # Docs legitimately write `/home/…` (or ~/...) when telling readers NOT to hardcode paths.
+        # Docs legitimately reference the forbidden pattern when telling readers NOT to hardcode.
         _write(self.root / "AGENTS.md", "- never hardcode `/" + "home/…`; use $HOME.\n")
         self.assertEqual(staticchecks.scan_abs_paths(self.ctx), [])
 

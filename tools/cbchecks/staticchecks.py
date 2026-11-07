@@ -62,8 +62,8 @@ RULES: tuple[tuple[str, str], ...] = (
 ESP_ERROR_CHECK_RULE = "ESP_ERROR_CHECK( in cb_bsp (use error returns, or '// cbcheck:allow')"
 BSP_ESP_CHECK_SCOPE = "components/cb_bsp"
 
-# A real absolute home path needs a user segment; prose like `/home/…` (docs warning against
-# hardcoding) must not be flagged.
+# A real absolute home path needs a user segment; prose that merely warns against hardcoding
+# absolute user-home paths must not be flagged.
 ABS_PATH_RE = re.compile(r"/(?:home|Users)/[A-Za-z0-9._-]+/")
 ALLOW_FILE = "tools/cbchecks/staticchecks.py"
 
