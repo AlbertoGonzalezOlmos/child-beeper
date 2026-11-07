@@ -1,0 +1,3 @@
+# Root-app project defaults (2nd SDKCONFIG_DEFAULTS entry).
+# Paths here are resolved relative to THIS project's dir = the repo root.
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="config/partitions.csv"

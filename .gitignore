@@ -9,3 +9,13 @@ sdkconfig.old
 *.bin
 *.elf
 *.map
+
+# NOTE: dependencies.lock is COMMITTED (one per project, owner commits it) — do not ignore it.
+
+# CMake / tooling caches
+.cache/
+compile_commands.json
+
+# Python
+__pycache__/
+*.pyc

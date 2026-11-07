@@ -1,0 +1,4 @@
+dependencies:
+  idf: ">=6.1.0,<6.2.0"
+  cb_bsp:
+    path: ../components/cb_bsp
