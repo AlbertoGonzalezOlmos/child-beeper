@@ -123,7 +123,9 @@ def _offline_gate(ctx: Ctx, runner: Runner) -> bool:
 
 def verify(ctx: Ctx, runner: Runner, *, fast: bool = False) -> tuple[int, list[StepResult]]:
     steps = StepRunner(ctx, runner)
-    meta = report.meta(ctx, runner, mode={"fast": fast, "offline": ctx.offline, "no_arduino": ctx.no_arduino})
+    mode = {"fast": fast, "offline": ctx.offline, "no_arduino": ctx.no_arduino}
+    mode["offline_namespace"] = (runner.offline_available() if ctx.offline else None)
+    meta = report.meta(ctx, runner, mode=mode)
 
     # 1. doctor ---------------------------------------------------------------
     doctor_failed = False
@@ -245,8 +247,14 @@ def verify(ctx: Ctx, runner: Runner, *, fast: bool = False) -> tuple[int, list[S
 
     # 10. report --------------------------------------------------------------
     def _report() -> tuple[str, str, dict]:
-        md, js = report.write_report(ctx, steps.results, meta)
-        return PASS, f"{md} + {js}", {"report_md": str(md), "report_json": str(js)}
+        # Include this step in the written report (it is the last one, so the set is known).
+        md, js = report.report_paths(ctx)
+        detail = f"{md} + {js}"
+        pending = steps.results + [
+            StepResult("report", PASS, detail, 0, {"report_md": str(md), "report_json": str(js)})
+        ]
+        report.write_report(ctx, pending, meta)
+        return PASS, detail, {"report_md": str(md), "report_json": str(js)}
 
     steps.step("report", _report)
 

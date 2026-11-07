@@ -116,6 +116,7 @@ class TestVerifyHappyPath(TempRepoTest):
         ids = [step["id"] for step in payload["steps"]]
         self.assertIn("build:app", ids)
         self.assertIn("guards-no-board", ids)
+        self.assertEqual(ids[-1], "report")
         self.assertIn("sizes", payload["steps"][ids.index("build:app")]["extra"])
 
     def test_fast_mode_skips_builds_but_keeps_ids(self) -> None:
@@ -244,9 +245,11 @@ class TestVerifyOffline(TempRepoTest):
             def offline_available(self) -> bool:
                 return True
 
-        code, results, _ = _run_verify(self.root, offline=True, runner_cls=UnshareRunner)
+        code, results, ctx = _run_verify(self.root, offline=True, runner_cls=UnshareRunner)
         self.assertEqual({r.id: r.status for r in results}["build:app"], "PASS")
         self.assertEqual(code, 0)
+        payload = json.loads(report.report_paths(ctx)[1].read_text(encoding="utf-8"))
+        self.assertTrue(payload["mode"]["offline_namespace"])
 
 
 class TestDeps(TempRepoTest):
