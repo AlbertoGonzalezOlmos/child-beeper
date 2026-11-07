@@ -1,0 +1,17 @@
+dependencies:
+  cb_bsp:
+    dependencies: []
+    source:
+      path: components/cb_bsp
+      type: local
+    version: '*'
+  idf:
+    source:
+      type: idf
+    version: 6.1.0
+direct_dependencies:
+- cb_bsp
+- idf
+manifest_hash: f72ccece0b6c60f6c5f9411ca04bea74d1cdd056585bfad66b8ba44d3086cf66
+target: esp32s3
+version: 3.0.0
