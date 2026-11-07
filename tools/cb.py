@@ -106,12 +106,18 @@ def cmd_deps(args: argparse.Namespace) -> int:
             cwd=ctx.root,
             timeout=1800.0,
         )
-        partition_bin = bdir / "partition_table" / "partition-table.bin"
-        # `idf.py reconfigure` can exit 0 while the partition step tracebacks (measured):
-        # assert the artefact instead of trusting the status code.
-        if not result.ok or not partition_bin.is_file():
-            failures.append(f"{target.name}: reconfigure did not produce {partition_bin}")
-            _print(f"[FAIL] deps {target.name}: {(result.tail(6) or 'no partition table').strip()}", err=True)
+        sdkconfig = bdir / "sdkconfig"
+        # `idf.py reconfigure` can exit 0 while emitting a traceback (measured on a bad CSV path),
+        # so success requires the generated sdkconfig as well as the exit code. The partition
+        # binary is produced by the build, not by reconfigure: './cb verify' asserts it
+        # (sdkconfig-assert) plus the two partition content lines.
+        keys_ok = sdkconfig.is_file() and all(
+            key in sdkconfig.read_text(encoding="utf-8", errors="replace")
+            for key in ("CONFIG_PARTITION_TABLE_CUSTOM=y", "CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y")
+        )
+        if not result.ok or not keys_ok:
+            failures.append(f"{target.name}: reconfigure did not produce a usable {sdkconfig}")
+            _print(f"[FAIL] deps {target.name}: {(result.tail(6) or 'no sdkconfig').strip()}", err=True)
         else:
             _print(f"[PASS] deps {target.name}: {bdir}")
     if failures:

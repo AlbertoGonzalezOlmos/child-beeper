@@ -249,6 +249,49 @@ class TestVerifyOffline(TempRepoTest):
         self.assertEqual(code, 0)
 
 
+class TestDeps(TempRepoTest):
+    def test_deps_reports_success_when_sdkconfig_is_generated(self) -> None:
+        import cb as cli
+
+        make_repo(self.root)
+
+        class DepsRunner(BuildSimRunner):
+            def run_idf(self, args, *, cwd, timeout=3600.0):  # type: ignore[override]
+                build_dir = Path(_flag(list(args), "-B"))
+                build_dir.mkdir(parents=True, exist_ok=True)
+                (build_dir / "sdkconfig").write_text(SDKCONFIG, encoding="utf-8")
+                from cbchecks.proc import Result
+
+                return Result(["idf.py", *args], 0, "", "", 1)
+
+        saved = cli.Runner
+        cli.Runner = lambda ctx: DepsRunner(ctx)  # type: ignore[assignment]
+        try:
+            with support.use_repo(self.root):
+                out = io.StringIO()
+                with redirect_stdout(out):
+                    code = cli.main(["deps"])
+        finally:
+            cli.Runner = saved  # type: ignore[assignment]
+        self.assertEqual(code, 0, out.getvalue())
+        self.assertIn("[PASS] deps app", out.getvalue())
+
+    def test_deps_fails_without_sdkconfig(self) -> None:
+        import cb as cli
+
+        make_repo(self.root)
+        saved = cli.Runner
+        cli.Runner = lambda ctx: FakeRunner(ctx)  # type: ignore[assignment]
+        try:
+            with support.use_repo(self.root):
+                out = io.StringIO()
+                with redirect_stdout(out):
+                    code = cli.main(["deps"])
+        finally:
+            cli.Runner = saved  # type: ignore[assignment]
+        self.assertEqual(code, 1)
+
+
 class TestSizesFallback(TempRepoTest):
     def test_bin_size_fallback_is_always_produced(self) -> None:
         from cbchecks import sizes
