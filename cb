@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# ./cb — Child Beeper toolkit CLI entry point.
+# Keeps the repository root independent of the caller's cwd and of the host layout.
+set -euo pipefail
+
+src="${BASH_SOURCE[0]}"
+while [ -L "$src" ]; do
+    dir="$(cd -P "$(dirname "$src")" && pwd)"
+    src="$(readlink "$src")"
+    case "$src" in
+        /*) ;;
+        *) src="$dir/$src" ;;
+    esac
+done
+root="$(cd -P "$(dirname "$src")" && pwd)"
+
+exec python3 "$root/tools/cb.py" "$@"
