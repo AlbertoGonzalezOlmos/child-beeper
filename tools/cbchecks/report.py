@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
 
-from .context import Ctx
+from .context import Ctx, arduino_cli
 from .proc import Runner
 
 SCHEMA = 1
@@ -42,7 +42,12 @@ def meta(ctx: Ctx, runner: Runner | None = None, *, mode: dict | None = None) ->
         idf = runner.idf_version()
     except Exception:  # noqa: BLE001 - the report must never fail on a probe
         idf = None
-    arduino = os.environ.get("CB_ARDUINO_CLI", "arduino-cli")
+    cli = arduino_cli()
+    arduino: str | None = None
+    if cli is not None:
+        probe = runner.run([str(cli), "version"], timeout=60)
+        first = probe.out.strip().splitlines()[0] if probe.ok and probe.out.strip() else ""
+        arduino = first or str(cli)
     return {
         "schema": SCHEMA,
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),

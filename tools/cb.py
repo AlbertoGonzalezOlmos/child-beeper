@@ -99,7 +99,7 @@ def cmd_deps(args: argparse.Namespace) -> int:
             [
                 "-C", str(target.path),
                 "-B", str(bdir),
-                "-DSDKCONFIG", str(bdir / "sdkconfig"),
+                f"-DSDKCONFIG={bdir / 'sdkconfig'}",
                 "-DIDF_TARGET=esp32s3",
                 "reconfigure",
             ],
@@ -220,7 +220,7 @@ def cmd_flash(args: argparse.Namespace) -> int:
         [
             "-C", str(target.path),
             "-B", str(outcome.build_dir),
-            "-DSDKCONFIG", str(outcome.build_dir / "sdkconfig"),
+            f"-DSDKCONFIG={outcome.build_dir / 'sdkconfig'}",
             "-p", port,
             "flash",
         ],

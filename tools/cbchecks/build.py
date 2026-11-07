@@ -26,6 +26,31 @@ SDKCONFIG_REQUIRED = (
     "CONFIG_PARTITION_TABLE_CUSTOM=y",
 )
 
+ERROR_HINTS = (
+    "CMake Error",
+    "FATAL_ERROR",
+    "ninja: error",
+    "error:",
+    "No such option",
+    "Could not find",
+    "not found",
+)
+
+
+def extract_error(text: str, limit: int = 3) -> str:
+    """Return the first few error-looking lines so a failed step is self-explanatory."""
+    picked: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if any(hint in stripped for hint in ERROR_HINTS):
+            picked.append(stripped)
+            if len(picked) >= limit:
+                break
+    return " | ".join(picked)
+
+
 FACTORY_LINE = re.compile(r"^factory,\s*app,\s*factory,\s*0x10000,\s*3M", re.MULTILINE)
 STORAGE_LINE = re.compile(
     r"^storage,\s*data,\s*fat,\s*0x310000,\s*(?:0x800000|8M)", re.MULTILINE
@@ -87,7 +112,7 @@ def build_idf(ctx: Ctx, runner: Runner, target: Target, *, timeout: float = 3600
     args = [
         "-C", str(project_dir(target)),
         "-B", str(bdir),
-        "-DSDKCONFIG", str(sdkconfig),
+        f"-DSDKCONFIG={sdkconfig}",
         "-DIDF_TARGET=esp32s3",
         "build",
     ]
@@ -98,8 +123,8 @@ def build_idf(ctx: Ctx, runner: Runner, target: Target, *, timeout: float = 3600
     if ok:
         detail = f"{binary.name} {binary.stat().st_size} bytes; log {log}"
     else:
-        tail = result.tail(10) or "(no output)"
-        detail = f"build failed (log {log}): {tail}"
+        reason = extract_error((result.out or "") + (result.err or "")) or result.tail(4) or "(no output)"
+        detail = f"build failed: {reason} (log {log})"
     extra: dict = {"build_dir": str(bdir), "log": str(log)}
     if binary is not None:
         extra["artifacts"] = artifacts(bdir)
@@ -123,7 +148,11 @@ def build_arduino(ctx: Ctx, runner: Runner, target: Target) -> BuildOutcome:
     result = runner.run_arduino(argv, cwd=ctx.root)
     log = _write_log(ctx, f"arduino:{target.name}", (result.out or "") + (result.err or ""))
     ok = result.ok
-    detail = f"compiled; log {log}" if ok else f"compile failed (log {log}): {result.tail(10)}"
+    if ok:
+        detail = f"compiled; log {log}"
+    else:
+        reason = extract_error((result.out or "") + (result.err or "")) or result.tail(4)
+        detail = f"compile failed: {reason} (log {log})"
     return BuildOutcome(ok, target, bdir, log, detail, {"build_dir": str(bdir), "log": str(log)})
 
 
