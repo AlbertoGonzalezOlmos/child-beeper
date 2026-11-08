@@ -42,9 +42,10 @@ hint) · **3** usage/environment problem. In `verify`: a FAIL in `doctor` → 3,
 Conventions:
 - **Build dirs**: `${CB_BUILD_ROOT:-build}/<target>`. When several people/agents share the tree,
   each exports their own root, e.g. `export CB_BUILD_ROOT=build/<your-name>`.
-- **Concurrency**: `./cb` holds a repo-level `flock` (`<build_root>/.cb.lock`) around every
-  IDF/make/arduino-cli call, and passes `-DSDKCONFIG=<build_root>/<target>/sdkconfig`, so parallel
-  builds never share a project-dir `sdkconfig`.
+- **Concurrency**: `./cb` holds a **repo-wide** `flock` (`<repo>/.cache/cb-build.lock`,
+  git-ignored) around every IDF/make/arduino-cli call — it serialises agents even when they use
+  different `CB_BUILD_ROOT`s — and passes `-DSDKCONFIG=<build_root>/<target>/sdkconfig`, so
+  parallel builds never share a project-dir `sdkconfig`.
 - **Reports**: `${CB_BUILD_ROOT:-build}/verify-report.md|json`; host test binary at
   `${CB_BUILD_ROOT:-build}/host/run_tests`.
 - Only `./cb deps` and `./cb arduino --install-libs` touch the network; nothing is installed
@@ -57,8 +58,9 @@ Typical session:
 ./cb deps            # once: resolve/warm components, generate locks
 ./cb build --all     # root app + all examples
 ./cb test            # host unit tests
-./cb verify          # the full no-board gate; ./cb report to re-read it
-./cb flash --target app   # exit 2 with recovery hint while no board is attached
+./cb verify          # the full gate; ./cb report to re-read it
+./cb flash --target app   # hardware-verified 2026-11-08; exit 2 + hint only when no port
+./cb monitor              # streams the console live; Ctrl-] quits
 ```
 
 ## Raw `idf.py` (IDE-friendly; project owner only while the tree is shared)

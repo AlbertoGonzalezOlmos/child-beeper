@@ -88,6 +88,13 @@ to make these visible at a glance on hardware day.
 - **Firmware runs but console is silent**: console not on USB-Serial/JTAG — IDF needs
   `CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y` (board defaults), Arduino needs `CDCOnBoot=cdc` +
   `USBMode=hwcdc` (locked FQBN). UART0 is not broken out.
+- **Early boot lines never appear** (banner / bootloader / WARN right after reset): the native USB
+  peripheral re-enumerates and the host re-attaches ~1 s late — inherent to USB-Serial/JTAG
+  (measured 2026-11-08). Watch for the root app's one-shot `boot summary:` line on the first
+  heartbeat instead; a raw `cat /dev/ttyACM0` shows the same stream.
+- **`./cb monitor` silent while `cat /dev/ttyACM0` streams**: fixed in the item-1 fix round —
+  monitor is a live pass-through now; make sure stdin is a terminal (it warns otherwise, Ctrl-]
+  may not reach it).
 - **Port disappears mid-flash**: normal — native USB re-enumerates on reset; wait and retry.
 - **Flash succeeds, app boot-loops**: suspect PSRAM config (above) or a brownout from a bright RGB
   LED at startup (item 3 caps brightness).

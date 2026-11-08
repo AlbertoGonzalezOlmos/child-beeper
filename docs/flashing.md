@@ -1,8 +1,9 @@
 # Flashing & monitor — native USB-Serial/JTAG
 
-> Status: build-verified guard behaviour (item 1, 2026-11-08 — tested with **no board attached**,
-> which is exactly the state this doc describes). Actual flashing is **not hardware-verified**;
-> it is hardware-day checklist items 1–3 in [verification.md](verification.md).
+> Status (updated 2026-11-08): flashing and monitoring are **hardware-verified** on
+> `/dev/ttyACM0` (`./cb flash --target app`, live `./cb monitor`, ~11 min heartbeat soak); the
+> guard is verified via `CB_FORCE_NO_PORTS=1`; the **BOOT+RESET recovery drill is still pending**
+> (needs a physical press). Checklist: [verification.md](verification.md).
 
 ## How the board connects
 
@@ -33,10 +34,22 @@ bridge chip. Consequences:
 
 Arduino uploads go through `./cb arduino` / the IDE with the same FQBN (item 7+).
 
+### What you will (and will not) see on the console
+
+- After every reset the native USB peripheral **re-enumerates** and the host re-attaches ~1 s
+  later, so ROM/bootstrap/bootloader output and the app's early banner/WARN lines are **dropped**
+  — inherent to USB-Serial/JTAG, not a firmware bug (measured 2026-11-08).
+- The root app compensates with a **one-shot boot summary on its first heartbeat**:
+  `boot summary: reset=… cb_bsp=… init(CB_PART_ALL)=… idf=…`. Watch for that line instead of the
+  true early boot log.
+- `./cb monitor` streams live (`cb: monitoring — press Ctrl-] to quit`; it warns when stdin is not
+  a terminal, because then Ctrl-] may not reach the monitor). A raw `cat /dev/ttyACM0` shows the
+  same stream (heartbeats every 2 s).
+
 ## The no-board guard (exit code 2)
 
 `flash`, `monitor` and `selftest` check ports **before** building or calling esptool. With nothing
-attached (today's state) they print a recovery hint and exit **2**:
+attached (or with `CB_FORCE_NO_PORTS=1` set) they print a recovery hint and exit **2**:
 
 ```
 cb: no usable serial port found (looked for /dev/ttyACM*, /dev/ttyUSB*).

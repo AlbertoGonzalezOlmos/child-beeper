@@ -1,8 +1,8 @@
 # Documentation index — child-beeper programming toolkit
 
-> Status: item 1 (2026-11-08). Everything in this repo is currently **build-verified only** —
-> no board was attached when it was written. The distinction and the hardware-day procedure:
-> [verification.md](verification.md).
+> Status: item 1 (updated 2026-11-08, board attached). The toolkit is build-verified; flash,
+> console and an ~11-minute app soak are **hardware-verified** — everything else is still
+> build-verified only. Levels + checklist: [verification.md](verification.md).
 
 Toolkit for the **Waveshare ESP32-S3-LCD-1.47B** (ESP32-S3R8, 16 MB flash, 8 MB octal PSRAM,
 172×320 ST7789 LCD *without touch*, QMI8658 IMU, 1× RGB LED, BOOT button, battery ADC, TF card,
@@ -24,7 +24,7 @@ top of a reusable BSP (`components/cb_bsp`) — on both ESP-IDF v6.1 and Arduino
 Also: [`README.md`](../README.md) (30-second quickstart) and [`AGENTS.md`](../AGENTS.md) (rules for
 agents working in this tree: one writer per file, frozen names, commit format).
 
-## Quickstart (no board needed)
+## Quickstart (board optional)
 
 ```bash
 . ~/.espressif/tools/activate_idf_v6.1.sh   # or let ./cb locate it for you
@@ -34,13 +34,13 @@ export CB_BUILD_ROOT=build/<your-name>      # only when sharing the tree with ot
 ./cb verify                                 # the full no-board gate; ./cb report to re-read
 ```
 
-With a board attached (hardware day — see the checklist in
-[verification.md](verification.md#hardware-day-checklist-run-when-a-board-is-attached-record-results-here)):
+With a board attached (first session done 2026-11-08 — checklist in
+[verification.md](verification.md)):
 
 ```bash
-./cb ports                     # expect /dev/ttyACM0
-./cb flash --target app        # exit 2 + BOOT/RESET hint while no board is attached
-./cb monitor                   # Ctrl-] quits
+./cb ports                     # verified 2026-11-08: exactly /dev/ttyACM0
+./cb flash --target app        # hardware-verified; exit 2 + BOOT/RESET hint only when no port
+./cb monitor                   # streams live; Ctrl-] quits
 ```
 
 ## Repository layout (item 1)
@@ -61,7 +61,7 @@ arduino/                      # item 7: staged CBBoard library + sketches (absen
 
 | Feature | BSP module | Example | Build-verified | Hardware-verified |
 |---|---|---|---|---|
-| Lifecycle/version | `cb_bsp_init` | root app | item 1 | ✗ |
+| Lifecycle/version | `cb_bsp_init` | root app | item 1 | ✓ boot + console + 11 min soak (2026-11-08) |
 | Pins/math/FSM/QMI regs (pure, host-tested) | `cb_pins.h`, `cb_math`, `cb_button_fsm`, `cb_qmi8658_regs` | `tests/host` | item 1 | n/a (logic) |
 | LCD + LVGL 9.5 + backlight | item 2 | `01_lcd_hello` (skeleton only in item 1) | item 2 | ✗ |
 | RGB LED, BOOT button, battery | item 3 | `02_rgb_button`, `03_battery` | item 3 | ✗ |

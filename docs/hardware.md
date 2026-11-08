@@ -1,10 +1,9 @@
 # Hardware reference — Waveshare ESP32-S3-LCD-1.47B
 
-> Status: build-verified (item 1, 2026-11-08); facts measured/extracted from the board's vendor
-> material and the verified build skeleton. Pin values mirror the frozen header
-> `components/cb_bsp/include/cb_pins.h`.
-> **Nothing here is hardware-verified** — no board attached; runtime checks live in
-> [verification.md](verification.md#hardware-day-checklist-run-when-a-board-is-attached-record-results-here).
+> Status (updated 2026-11-08, board attached): chip identity, flash size and PSRAM presence are
+> now **hardware-verified** (see below); every peripheral behaviour on this page is still
+> **build-verified only** until the checklist in [verification.md](verification.md) ticks it.
+> Pin values mirror the frozen header `components/cb_bsp/include/cb_pins.h`.
 
 ## Board / SoC
 
@@ -15,6 +14,12 @@
 - 1.47" **172×320 ST7789** LCD, **no touch panel**, 1× addressable RGB LED, BOOT button, battery
   ADC, TF (microSD) slot, native **USB-Serial/JTAG** on Type-C (no UART bridge chip).
 - Input model (no touch): BOOT button, IMU tilt/gestures (later items), radio (later items).
+
+**Observed device identity — hardware-verified 2026-11-08** (`esptool flash_id` on
+`/dev/ttyACM0`): `ESP32-S3 QFN56 rev v0.2` · features: `Embedded PSRAM 8MB (AP_3v3)` ·
+`Detected flash size: 16MB`. With this config the root app boots, streams a 2 s heartbeat over
+the USB-Serial/JTAG console, and soaked ~11 min (`alive #323`) with no WDT/reset — see
+[verification.md](verification.md) "Hardware status".
 
 ## Pin table (single source of truth: `cb_pins.h` — do not renumber anywhere else)
 

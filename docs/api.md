@@ -111,9 +111,11 @@ Ruled semantics (deferred-CLICK machine — implement/exactly this, no third var
 - PRESS on the stable press edge; RELEASE on the stable release edge.
 - LONG_PRESS fires **once** when a stable press reaches ≥ 800 ms; it suppresses any click; the
   following release yields only RELEASE.
-- Every non-long release arms a **deferred** click: CLICK is emitted only once the 350 ms
-  double-gap expires with no second press (so single clicks arrive ~350 ms late — by design, no
-  dead zone: every non-long release produces CLICK or DOUBLE_CLICK).
+- Every non-long release arms a **deferred** click: CLICK is emitted once the 350 ms double-gap
+  expires with **no second qualifying RELEASE** (so single clicks arrive ~350 ms late — by design,
+  no dead zone: every non-long release produces CLICK or DOUBLE_CLICK). A second press still
+  *held* when the gap expires does **not** suppress the CLICK (host-tested); only a second
+  release inside the gap converts the pending click into DOUBLE_CLICK.
 - A second stable release within 350 ms of the first yields RELEASE then **DOUBLE_CLICK** — never
   CLICK followed by DOUBLE_CLICK.
 
