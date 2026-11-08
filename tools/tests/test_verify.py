@@ -6,7 +6,7 @@ import io
 import json
 import os
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 import support
@@ -39,6 +39,7 @@ class BuildSimRunner(FakeRunner):
         self.reply("cb.py flash", 2, "", HINT)
         self.reply("cb.py monitor", 2, "", HINT)
         self.reply("make test", 0, "ok - all\n1..1\n")
+        self.reply("-m unittest discover", 0, "", "Ran 52 tests in 0.1s\n\nOK\n")
 
     def run_idf(self, args, *, cwd, timeout=3600.0):  # type: ignore[override]
         result = super().run_idf(args, cwd=cwd)
@@ -66,10 +67,10 @@ def _run_verify(root: Path, *, fast: bool = False, offline: bool = False, runner
                 no_arduino: bool = False) -> tuple[int, list, Ctx]:
     ctx = ctx_for(root, **({"offline": offline, "no_arduino": no_arduino}))
     runner = runner_cls(ctx)
-    out = io.StringIO()
-    with redirect_stdout(out):
+    out, err = io.StringIO(), io.StringIO()
+    with redirect_stdout(out), redirect_stderr(err):
         code, results = verify.verify(ctx, runner, fast=fast)
-    _run_verify.last_output = out.getvalue()  # type: ignore[attr-defined]
+    _run_verify.last_output = out.getvalue() + err.getvalue()  # type: ignore[attr-defined]
     return code, results, ctx
 
 
@@ -90,6 +91,7 @@ class TestVerifyHappyPath(TempRepoTest):
             [
                 "doctor",
                 "host-tests",
+                "cli-tests",
                 "pin-drift",
                 "audit-static",
                 "build:app",
@@ -127,6 +129,7 @@ class TestVerifyHappyPath(TempRepoTest):
         self.assertEqual(by_id["sdkconfig-assert"].status, "SKIP")
         self.assertEqual(by_id["doctor"].status, "PASS")
         self.assertEqual(by_id["host-tests"].status, "PASS")
+        self.assertEqual(by_id["cli-tests"].status, "PASS")
         self.assertEqual(code, 0)
 
     def test_sdkconfig_assert_detects_missing_keys(self) -> None:
@@ -136,12 +139,13 @@ class TestVerifyHappyPath(TempRepoTest):
         bdir.mkdir(parents=True)
         (bdir / "sdkconfig").write_text("CONFIG_SPIRAM=y\n", encoding="utf-8")
         (bdir / "partition_table").mkdir()
-        ok, detail, _ = verify.builder.assert_sdkconfig(ctx, _app_target(ctx), bdir)
+        ok, detail, _ = verify.builder.assert_sdkconfig(ctx, runner, _app_target(ctx), bdir)
         self.assertFalse(ok)
         self.assertIn("missing keys", detail)
 
     def test_sdkconfig_assert_detects_wrong_partition_csv(self) -> None:
         ctx = ctx_for(self.root)
+        runner = BuildSimRunner(ctx)
         bdir = ctx.build_root / "app"
         bdir.mkdir(parents=True)
         (bdir / "sdkconfig").write_text(SDKCONFIG, encoding="utf-8")
@@ -149,9 +153,9 @@ class TestVerifyHappyPath(TempRepoTest):
         (bdir / "partition_table/partition-table.bin").write_bytes(b"\x00")
         ctx.log_path("build:app").parent.mkdir(parents=True, exist_ok=True)
         ctx.log_path("build:app").write_text("factory, app, factory, 0x10000, 3M\n", encoding="utf-8")
-        ok, detail, _ = verify.builder.assert_sdkconfig(ctx, _app_target(ctx), bdir)
+        ok, detail, _ = verify.builder.assert_sdkconfig(ctx, runner, _app_target(ctx), bdir)
         self.assertFalse(ok)
-        self.assertIn("storage", detail)
+        self.assertIn("partition table", detail)
 
 
 def _app_target(ctx: Ctx):
@@ -238,7 +242,8 @@ class TestVerifyOffline(TempRepoTest):
         by_id = {r.id: r for r in results}
         self.assertEqual(by_id["build:app"].status, "SKIP")
         self.assertIn("NOT proven offline", by_id["build:app"].detail)
-        self.assertEqual(code, 0)
+        self.assertEqual(code, 1, "skipped builds without --fast must fail the gate")
+        self.assertIn("gate NOT fully proven", _run_verify.last_output)
 
     def test_offline_with_unshare_still_builds(self) -> None:
         class UnshareRunner(BuildSimRunner):
@@ -250,6 +255,143 @@ class TestVerifyOffline(TempRepoTest):
         self.assertEqual(code, 0)
         payload = json.loads(report.report_paths(ctx)[1].read_text(encoding="utf-8"))
         self.assertTrue(payload["mode"]["offline_namespace"])
+
+
+def _write_partition_bin(path: Path, rows) -> None:
+    """Write a real ESP-IDF partition-table.bin (32-byte LE entries, magic 0xAA50)."""
+    import struct
+
+    entry = struct.Struct("<HBBII16sI")
+    blob = b""
+    for name, ptype, subtype, offset, size in rows:
+        blob += entry.pack(0x50AA, ptype, subtype, offset, size, name.encode().ljust(16, b"\0"), 0)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(blob)
+
+
+GOOD_ROWS = [
+    ("nvs", 1, 0x02, 0x9000, 0x6000),
+    ("phy_init", 1, 0x01, 0xF000, 0x1000),
+    ("factory", 0, 0x00, 0x10000, 3 * 1024 * 1024),
+    ("storage", 1, 0x81, 0x310000, 8 * 1024 * 1024),
+]
+BAD_ROWS = [
+    ("factory", 0, 0x00, 0x10000, 1 * 1024 * 1024),
+    ("storage", 1, 0x81, 0x310000, 1 * 1024 * 1024),
+]
+
+
+class TestPartitionTableDecoding(TempRepoTest):
+    """P0-1: the assertion must read the built table, not the (incremental) build log."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        make_repo(self.root)
+        self.ctx = ctx_for(self.root)
+        self.runner = BuildSimRunner(self.ctx)
+        self.bdir = self.ctx.build_root / "app"
+        self.bdir.mkdir(parents=True)
+        (self.bdir / "sdkconfig").write_text(SDKCONFIG, encoding="utf-8")
+
+    def test_passes_without_any_build_log(self) -> None:
+        _write_partition_bin(self.bdir / "partition_table/partition-table.bin", GOOD_ROWS)
+        self.assertFalse(self.ctx.log_path("build:app").exists(), "incremental-build scenario")
+        ok, detail, extra = verify.builder.assert_sdkconfig(
+            self.ctx, self.runner, _app_target(self.ctx), self.bdir
+        )
+        self.assertTrue(ok, detail)
+        self.assertEqual(extra["partition_source"], "binary decode")
+        self.assertTrue(any(row["name"] == "storage" for row in extra["partition_rows"]))
+
+    def test_prefers_gen_esp32part_output(self) -> None:
+        _write_partition_bin(self.bdir / "partition_table/partition-table.bin", BAD_ROWS)
+        self.runner.reply(
+            "gen_esp32part.py",
+            0,
+            "# ESP-IDF Partition Table\n"
+            "nvs,data,nvs,0x9000,24K,\n"
+            "phy_init,data,phy,0xf000,4K,\n"
+            "factory,app,factory,0x10000,3M,\n"
+            "storage,data,fat,0x310000,8M,\n",
+            "",
+        )
+        ok, detail, extra = verify.builder.assert_sdkconfig(
+            self.ctx, self.runner, _app_target(self.ctx), self.bdir
+        )
+        self.assertTrue(ok, detail)
+        self.assertEqual(extra["partition_source"], "gen_esp32part.py")
+
+    def test_fails_on_wrong_sizes_even_with_a_log(self) -> None:
+        _write_partition_bin(self.bdir / "partition_table/partition-table.bin", BAD_ROWS)
+        self.ctx.log_path("build:app").parent.mkdir(parents=True, exist_ok=True)
+        self.ctx.log_path("build:app").write_text(
+            "factory, app, factory, 0x10000, 1M\nstorage, data, fat, 0x310000, 1M\n",
+            encoding="utf-8",
+        )
+        ok, detail, _ = verify.builder.assert_sdkconfig(
+            self.ctx, self.runner, _app_target(self.ctx), self.bdir
+        )
+        self.assertFalse(ok)
+        self.assertIn("partition table does not match", detail)
+
+    def test_log_rows_still_work_as_or_fallback(self) -> None:
+        bin_path = self.bdir / "partition_table/partition-table.bin"
+        bin_path.parent.mkdir(parents=True, exist_ok=True)
+        bin_path.write_bytes(b"\x00" * 128)  # undecodable on purpose
+        self.ctx.log_path("build:app").parent.mkdir(parents=True, exist_ok=True)
+        self.ctx.log_path("build:app").write_text(PARTITION_ECHO, encoding="utf-8")
+        ok, detail, extra = verify.builder.assert_sdkconfig(
+            self.ctx, self.runner, _app_target(self.ctx), self.bdir
+        )
+        self.assertTrue(ok, detail)
+        self.assertIn("build log", extra["partition_source"])
+
+
+class TestRequiredLayout(TempRepoTest):
+    """P1-8: --fast must not hide a missing required project."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        os.environ["CB_FORCE_NO_PORTS"] = "1"
+
+    def test_fast_mode_still_fails_without_the_root_app(self) -> None:
+        make_repo(self.root, app=False, examples=())
+        code, results, _ = _run_verify(self.root, fast=True)
+        by_id = {r.id: r for r in results}
+        self.assertEqual(by_id["build:app"].status, "FAIL")
+        self.assertEqual(code, 1)
+
+    def test_fast_mode_still_fails_without_the_required_example(self) -> None:
+        make_repo(self.root, examples=())
+        code, results, _ = _run_verify(self.root, fast=True)
+        self.assertEqual({r.id: r for r in results}["build:01_lcd_hello"].status, "FAIL")
+        self.assertEqual(code, 1)
+
+
+class TestBuildAllScope(TempRepoTest):
+    def test_build_all_ignores_arduino_sketches(self) -> None:
+        import cb as cli
+
+        make_repo(self.root, arduino=True)
+        built: list[str] = []
+
+        class RecordingRunner(BuildSimRunner):
+            def run_idf(self, args, *, cwd, timeout=3600.0):  # type: ignore[override]
+                built.append(" ".join(args))
+                return super().run_idf(args, cwd=cwd, timeout=timeout)
+
+        saved = cli.Runner
+        cli.Runner = lambda ctx: RecordingRunner(ctx)  # type: ignore[assignment]
+        try:
+            with support.use_repo(self.root):
+                out = io.StringIO()
+                with redirect_stdout(out):
+                    code = cli.main(["build", "--all"])
+        finally:
+            cli.Runner = saved  # type: ignore[assignment]
+        self.assertEqual(code, 0, out.getvalue())
+        self.assertTrue(any("examples/01_lcd_hello" in cmd for cmd in built), built)
+        self.assertFalse(any("01_smoke" in cmd for cmd in built), "arduino must not be built here")
 
 
 class TestDeps(TempRepoTest):

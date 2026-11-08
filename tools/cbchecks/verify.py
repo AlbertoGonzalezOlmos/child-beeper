@@ -90,6 +90,25 @@ def _host_tests(ctx: Ctx, runner: Runner) -> tuple[str, str, dict]:
     return (PASS if result.ok else FAIL), detail, extra
 
 
+def _cli_tests(ctx: Ctx, runner: Runner) -> tuple[str, str, dict]:
+    tests_dir = ctx.path("tools/tests")
+    if not tests_dir.is_dir():
+        return FAIL, "tools/tests missing (owner: deepseek-flash)", {}
+    result = runner.run(
+        [sys.executable, "-m", "unittest", "discover", "-s", "tools/tests", "-t", ".", "-q"],
+        cwd=ctx.root,
+        timeout=600.0,
+    )
+    log = ctx.log_path("cli-tests")
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text((result.out or "") + (result.err or ""), encoding="utf-8")
+    if result.ok:
+        summary = [ln for ln in (result.err or "").splitlines() if ln.startswith("Ran ")]
+        return PASS, (summary[-1] if summary else "CLI unit tests passed"), {"log": str(log)}
+    tail = "; ".join((result.err or result.out or "").strip().splitlines()[-4:])
+    return FAIL, f"CLI unit tests failed: {tail} (log {log})", {"log": str(log)}
+
+
 def _guards(ctx: Ctx, runner: Runner) -> tuple[str, str, dict]:
     """R6: prove flash/monitor exit 2 and print the recovery hint, without hardware."""
     tree = ctx.root
@@ -146,8 +165,11 @@ def verify(ctx: Ctx, runner: Runner, *, fast: bool = False) -> tuple[int, list[S
 
     steps.step("doctor", _doctor)
 
-    # 2. host tests -----------------------------------------------------------
+    # 2. host tests (C, injected time) ---------------------------------------
     steps.step("host-tests", lambda: _host_tests(ctx, runner))
+
+    # 2b. CLI unit tests (python -m unittest, mocked subprocess) --------------
+    steps.step("cli-tests", lambda: _cli_tests(ctx, runner))
 
     # 3. pin drift ------------------------------------------------------------
     def _pin_drift() -> tuple[str, str, dict]:
@@ -173,10 +195,11 @@ def verify(ctx: Ctx, runner: Runner, *, fast: bool = False) -> tuple[int, list[S
     idf_targets: list[Target] = []
     offline_skipped = 0
     app = app_target(ctx)
-    if fast:
-        steps.skip("build:app", "fast mode (builds skipped)")
-    elif app is None:
+    if app is None:
+        # R6 + review: required layout is checked even in --fast mode.
         steps.step("build:app", lambda: (FAIL, "root project missing: CMakeLists.txt + main/ (owner: glm53)", {}))
+    elif fast:
+        steps.skip("build:app", "fast mode (builds skipped)")
     elif not _offline_gate(ctx, runner):
         steps.skip("build:app", OFFLINE_UNAVAILABLE)
         offline_skipped += 1
@@ -212,7 +235,7 @@ def verify(ctx: Ctx, runner: Runner, *, fast: bool = False) -> tuple[int, list[S
         problems: list[str] = []
         details: list[dict] = []
         for target in idf_targets:
-            ok, detail, extra = builder.assert_sdkconfig(ctx, target, build_dir(ctx, target))
+            ok, detail, extra = builder.assert_sdkconfig(ctx, runner, target, build_dir(ctx, target))
             details.append({"target": target.name, "ok": ok, "detail": detail, **extra})
             if not ok:
                 problems.append(detail)
@@ -259,9 +282,17 @@ def verify(ctx: Ctx, runner: Runner, *, fast: bool = False) -> tuple[int, list[S
     steps.step("report", _report)
 
     statuses = [r.status for r in steps.results]
+    if offline_skipped:
+        print(
+            f"cb: gate NOT fully proven: {offline_skipped} build step(s) skipped "
+            "(offline namespace unavailable)",
+            file=sys.stderr,
+        )
     if doctor_failed:
         return CODE_USAGE, steps.results
     if FAIL in statuses:
+        return CODE_FAIL, steps.results
+    if offline_skipped and not fast:
         return CODE_FAIL, steps.results
     return CODE_OK, steps.results
 

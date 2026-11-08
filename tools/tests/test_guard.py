@@ -11,7 +11,7 @@ import support
 from support import TempRepoTest, ctx_for, make_repo, use_repo
 
 from cbchecks import ports
-from cbchecks.errors import BoardError
+from cbchecks.errors import BoardError, UsageError
 
 
 class TestPortListing(TempRepoTest):
@@ -28,14 +28,21 @@ class TestPortListing(TempRepoTest):
         self.assertIn("RESET", message)
         self.assertEqual(raised.exception.code, 2)
 
-    def test_guard_refuses_non_device_explicit_port(self) -> None:
-        fake = self.root / "not-a-port"
-        fake.parent.mkdir(parents=True, exist_ok=True)
-        fake.write_text("x", encoding="utf-8")
+    def test_guard_refuses_non_serial_port_name(self) -> None:
+        # Any existing character device would pass a naive S_ISCHR check (/dev/null, /dev/zero…).
+        with self.assertRaises(UsageError) as raised:
+            ports.guard_port("/dev/null")
+        self.assertEqual(raised.exception.code, 3)
+        self.assertIn("not a serial board port", str(raised.exception))
+
+    def test_guard_accepts_only_serial_names_then_checks_the_device(self) -> None:
+        self.assertTrue(ports.is_serial_device_name("/dev/ttyACM0"))
+        self.assertTrue(ports.is_serial_device_name("/dev/ttyUSB1"))
+        self.assertFalse(ports.is_serial_device_name("/dev/tty"))
+        # right name, absent device -> board error (2), not usage
         with self.assertRaises(BoardError) as raised:
-            ports.guard_port(str(fake))
+            ports.guard_port("/dev/ttyACM9")
         self.assertEqual(raised.exception.code, 2)
-        self.assertIn("character device", str(raised.exception))
 
     def test_guard_refuses_multiple_ports(self) -> None:
         saved = ports.list_ports

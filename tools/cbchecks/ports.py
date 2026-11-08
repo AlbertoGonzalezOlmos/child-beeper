@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import fnmatch
 import glob
 import os
 import stat
-from pathlib import Path
 
-from .errors import BoardError
+from .errors import BoardError, UsageError
 
 PORT_GLOBS = ("/dev/ttyACM*", "/dev/ttyUSB*")
 
@@ -44,9 +44,22 @@ def is_char_device(device: str) -> bool:
         return False
 
 
+SERIAL_NAME_PATTERNS = ("ttyACM*", "ttyUSB*")
+
+
+def is_serial_device_name(device: str) -> bool:
+    """Only /dev/ttyACM* and /dev/ttyUSB* may be used as a board port."""
+    return any(fnmatch.fnmatch(os.path.basename(device), pattern) for pattern in SERIAL_NAME_PATTERNS)
+
+
 def guard_port(explicit: str | None = None) -> str:
-    """Return the port to use or raise BoardError (exit code 2)."""
+    """Return the port to use, or raise BoardError (2) / UsageError (3)."""
     if explicit:
+        if not is_serial_device_name(explicit):
+            raise UsageError(
+                f"--port {explicit} is not a serial board port "
+                f"(expected /dev/ttyACM* or /dev/ttyUSB*)."
+            )
         if not os.path.exists(explicit):
             raise BoardError(f"cb: requested port {explicit} does not exist.\n" + HINT)
         if not is_char_device(explicit):

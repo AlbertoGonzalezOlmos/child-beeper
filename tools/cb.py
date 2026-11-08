@@ -146,8 +146,11 @@ def cmd_build(args: argparse.Namespace) -> int:
     ctx = load_ctx()
     names = ["all"] if args.all else list(args.targets or [])
     chosen = targets_mod.resolve(ctx, names)
+    if args.all:
+        # CONTRACT: TARGET = "app" | example dir name. Arduino sketches are built by `./cb arduino`.
+        chosen = [t for t in chosen if t.is_idf]
     if not chosen:
-        raise UsageError("no targets to build")
+        raise UsageError("no IDF targets to build (root app / examples absent)")
     runner = Runner(ctx)
     failed: list[str] = []
     for target in chosen:
@@ -243,21 +246,25 @@ def cmd_monitor(args: argparse.Namespace) -> int:
     ctx = load_ctx()
     port = ports_mod.guard_port(args.port)
     target = targets_mod.resolve(ctx, [targets_mod.APP_NAME])[0]
+    if not os.isatty(0):
+        _print("cb: warning: stdin is not a terminal — Ctrl-] may not reach the monitor", err=True)
     _print("cb: monitoring — press Ctrl-] to quit")
     runner = Runner(ctx)
-    result = runner.run_idf(
+    streamed = runner.monitor_live(
         [
             "-C", str(target.path),
             "-B", str(targets_mod.build_dir(ctx, target)),
+            f"-DSDKCONFIG={targets_mod.build_dir(ctx, target) / 'sdkconfig'}",
             "-p", port,
             "monitor",
         ],
         cwd=ctx.root,
         timeout=float(os.environ.get("CB_MONITOR_TIMEOUT", "86400")),
     )
-    _print(result.out)
-    _print(result.err, err=True)
-    return CODE_OK if result.ok else CODE_FAIL
+    if streamed.timed_out:
+        _print(f"cb: monitor stopped after {os.environ.get('CB_MONITOR_TIMEOUT', '86400')}s timeout")
+        return CODE_OK
+    return CODE_OK if streamed.code in (0, None) else CODE_FAIL
 
 
 # ------------------------------------------------------------------------- selftest
@@ -274,18 +281,25 @@ def _parse_selftest(lines: list[str]) -> tuple[bool, str]:
         if "RESULT:" in stripped:
             result_line = stripped
     if not result_line:
-        return False, f"no RESULT: line within timeout (saw {items} ITEM lines)"
-    if failures or "FAIL" in result_line.upper():
+        return False, f"no RESULT: line within timeout (saw {items} ITEM line(s))"
+    if items < 1:
+        return False, f"RESULT without any ITEM line: {result_line}"
+    if failures or "FAIL" in result_line.upper() or "PASS" not in result_line.upper():
         return False, f"{failures} failing item(s); {result_line}"
-    return True, result_line
+    return True, f"{items} item(s); {result_line}"
 
 
 def cmd_selftest(args: argparse.Namespace) -> int:
     ctx = load_ctx()
     port = ports_mod.guard_port(args.port)  # guard BEFORE building/flashing
     available = {t.name for t in targets_mod.discover(ctx)}
-    name = "06_dashboard" if "06_dashboard" in available else targets_mod.APP_NAME
-    target = targets_mod.resolve(ctx, [name])[0]
+    selftest_apps = [n for n in available if n in ("06_dashboard", "08_selftest", "07_selftest")]
+    if not selftest_apps:
+        raise EnvError(
+            "no selftest firmware in this tree yet (item 6 lands examples/06_dashboard); "
+            "refusing to flash the plain app and wait for a RESULT: line"
+        )
+    target = targets_mod.resolve(ctx, [selftest_apps[0]])[0]
     runner = Runner(ctx)
     outcome = builder.build_target(ctx, runner, target)
     if not outcome.ok:
@@ -299,15 +313,24 @@ def cmd_selftest(args: argparse.Namespace) -> int:
         _print(flash.tail(20), err=True)
         return CODE_FAIL
     timeout = float(os.environ.get("CB_SELFTEST_TIMEOUT", "90"))
-    lines = list(
-        runner.monitor_stream(
-            ["-C", str(target.path), "-B", str(outcome.build_dir), "-p", port, "monitor"],
-            cwd=ctx.root,
-            timeout=timeout,
-            stop_marker="RESULT:",
-        )
+    streamed = runner.stream(
+        runner.idf_argv(
+            [
+            "-C", str(target.path),
+            "-B", str(outcome.build_dir),
+            f"-DSDKCONFIG={outcome.build_dir / 'sdkconfig'}",
+            "-p", port,
+            "monitor",
+            ]
+        ),
+        cwd=ctx.root,
+        timeout=timeout,
+        echo=True,
+        stop=lambda line: "RESULT:" in line,
     )
-    ok, detail = _parse_selftest(lines)
+    ok, detail = _parse_selftest(streamed.lines)
+    if streamed.timed_out and not any("RESULT:" in line for line in streamed.lines):
+        detail = f"timed out after {timeout:.0f}s; {detail}"
     _print(("[PASS] " if ok else "[FAIL] ") + "selftest " + detail)
     return CODE_OK if ok else CODE_FAIL
 

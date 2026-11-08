@@ -108,6 +108,7 @@ def make_repo(tmp: Path, *, app: bool = True, examples: tuple[str, ...] = ("01_l
         (base / "sdkconfig.defaults").write_text(
             'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="../../config/partitions.csv"\n', encoding="utf-8"
         )
+    (tmp / "tools" / "tests").mkdir(parents=True, exist_ok=True)
     if host_tests:
         host = tmp / "tests" / "host"
         host.mkdir(parents=True, exist_ok=True)

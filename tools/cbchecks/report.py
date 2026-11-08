@@ -16,7 +16,7 @@ from .context import Ctx, arduino_cli
 from .proc import Runner
 
 SCHEMA = 1
-VERIFICATION_LEVEL = "build-verified (no hardware attached)"
+VERIFICATION_LEVEL = "build-verified (compile/CLI only; hardware validation is tracked separately in docs/verification.md)"
 
 
 def report_paths(ctx: Ctx) -> tuple[Path, Path]:
@@ -78,7 +78,7 @@ def render_markdown(meta_dict: dict, results: Sequence) -> str:
     lines = [
         "# verify report",
         "",
-        f"**{VERIFICATION_LEVEL}** — nothing here is hardware-verified (see docs/verification.md).",
+        f"**{VERIFICATION_LEVEL}**.",
         "",
         f"- generated: {meta_dict.get('generated_at')}",
         f"- branch/sha: {meta_dict.get('repo', {}).get('branch')} / {meta_dict.get('repo', {}).get('sha')}",

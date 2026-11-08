@@ -10,8 +10,10 @@ from __future__ import annotations
 import contextlib
 import fcntl
 import os
+import queue
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -74,8 +76,11 @@ class Runner:
     # -------------------------------------------------------------- locking
     @contextlib.contextmanager
     def _lock(self):
-        self.ctx.build_root.mkdir(parents=True, exist_ok=True)
-        lock_path = self.ctx.build_root / ".cb.lock"
+        # R9: repo-level lock — per-build-root locks let two agents race on the shared
+        # project dirs (managed_components/, dependencies.lock, sdkconfig).
+        lock_dir = self.ctx.root / ".cache"
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        lock_path = lock_dir / "cb-build.lock"
         with open(lock_path, "w") as handle:
             try:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -136,6 +141,10 @@ class Runner:
         script = require_idf_activate()
         return f'set -e; . "{script}" >/dev/null 2>&1; exec idf.py "$@"'
 
+    def idf_argv(self, args: Sequence[str]) -> list[str]:
+        """argv that runs idf.py inside the activated ESP-IDF environment."""
+        return ["bash", "-lc", self._idf_script(), self.SHELL_ARGV0, *args]
+
     def run_idf(self, args: Sequence[str], *, cwd: Path, timeout: float = 3600.0) -> Result:
         prefix = self._prefix()
         with self._lock():
@@ -167,37 +176,92 @@ class Runner:
         with self._lock():
             return self.run([str(cli), *argv], cwd=cwd, timeout=timeout, prefix=self._prefix())
 
-    # -------------------------------------------------------------- streaming
-    def monitor_stream(self, args: Sequence[str], *, cwd: Path, timeout: float, stop_marker: str = "RESULT:"):
-        """Run `idf.py ... monitor`, yielding lines until stop_marker or timeout.
+    # ---------------------------------------------------------- IDF shell snippet
+    def run_idf_snippet(self, snippet: str, *, cwd: Path, timeout: float = 180.0) -> Result:
+        """Run a shell snippet after activating IDF (e.g. gen_esp32part.py)."""
+        script = f'set -e; . "{require_idf_activate()}" >/dev/null 2>&1; {snippet}'
+        return self.run(["bash", "-lc", script], cwd=cwd, timeout=timeout, prefix=self._prefix())
 
-        Yields (line) strings. Always kills the child and releases the lock.
+    # -------------------------------------------------------------- streaming
+    @dataclass
+    class StreamResult:
+        lines: list[str]
+        code: int | None
+        timed_out: bool
+
+        @property
+        def ok(self) -> bool:
+            return not self.timed_out and self.code in (0, None)
+
+    def stream(
+        self,
+        argv: Sequence[str],
+        *,
+        cwd: Path | None = None,
+        timeout: float = 60.0,
+        echo: bool = True,
+        env_extra: dict[str, str] | None = None,
+        stop: "Callable[[str], bool] | None" = None,
+        use_lock: bool = False,
+    ):
+        """Run argv, forwarding stdout line by line (live), with a deadline and optional stop.
+
+        Writes are flushed immediately, so this is genuinely live even through a pipe.
+        stdin is inherited (so idf.py monitor keeps working: Ctrl-] exits it).
         """
-        script = self._idf_script()
-        argv = self._prefix() + ["bash", "-lc", script, self.SHELL_ARGV0, *args]
-        deadline = time.monotonic() + timeout
-        with self._lock():
+        argv = list(argv)
+        env = dict(os.environ)
+        env.setdefault("PYTHONUNBUFFERED", "1")
+        if env_extra:
+            env.update(env_extra)
+        started = _now_ms()
+        lock_cm = self._lock() if use_lock else contextlib.nullcontext()
+        with lock_cm:
             proc = subprocess.Popen(
                 argv,
-                cwd=str(cwd),
+                cwd=str(cwd) if cwd else None,
+                env=env,
+                stdin=None,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
                 errors="replace",
                 bufsize=1,
             )
+            lines: list[str] = []
+            timed_out = False
+            assert proc.stdout is not None
+            reader_done = threading.Event()
+
+            def _pump() -> None:
+                try:
+                    for raw in proc.stdout:  # type: ignore[union-attr]
+                        q.put(raw)
+                finally:
+                    reader_done.set()
+
+            q: "queue.Queue[str]" = queue.Queue()
+            thread = threading.Thread(target=_pump, daemon=True)
+            thread.start()
             try:
-                assert proc.stdout is not None
-                while time.monotonic() < deadline:
-                    line = proc.stdout.readline()
-                    if not line:
-                        if proc.poll() is not None:
-                            return
-                        time.sleep(0.05)
+                while True:
+                    remaining = timeout - (_now_ms() - started) / 1000.0
+                    if remaining <= 0:
+                        timed_out = True
+                        break
+                    try:
+                        line = q.get(timeout=min(0.25, remaining))
+                    except queue.Empty:
+                        if reader_done.is_set() and proc.poll() is not None:
+                            break
                         continue
-                    yield line.rstrip("\r\n")
-                    if stop_marker in line:
-                        return
+                    text = line.rstrip("\r\n")
+                    lines.append(text)
+                    if echo:
+                        sys.stdout.write(text + "\n")
+                        sys.stdout.flush()
+                    if stop is not None and stop(text):
+                        break
             finally:
                 if proc.poll() is None:
                     proc.terminate()
@@ -205,5 +269,13 @@ class Runner:
                         proc.wait(timeout=5)
                     except subprocess.TimeoutExpired:
                         proc.kill()
-                if proc.stdout is not None:
+                reader_done.wait(timeout=2)
+                try:
                     proc.stdout.close()
+                except OSError:
+                    pass
+            return Runner.StreamResult(lines, proc.returncode, timed_out)
+
+    def monitor_live(self, args: Sequence[str], *, cwd: Path, timeout: float) -> "Runner.StreamResult":
+        """`idf.py monitor` with live output; Ctrl-] (handled by idf.py) exits."""
+        return self.stream(self.idf_argv(args), cwd=cwd, timeout=timeout, echo=True)

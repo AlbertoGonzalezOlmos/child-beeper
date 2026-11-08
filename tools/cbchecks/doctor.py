@@ -114,7 +114,8 @@ def _layout_checks(ctx: Ctx) -> list[Check]:
 def _deps_warmed(ctx: Ctx) -> Check:
     manifest = ctx.path(c.BSP_DIR) / "idf_component.yml"
     if not manifest.is_file():
-        return Check("deps-warmed", WARN, "components/cb_bsp/idf_component.yml missing (owner: mimo26-pro)")
+        # Item 1 ships no managed components (CONTRACT R5/R12): absence is the expected state.
+        return Check("deps-warmed", PASS, "no idf_component.yml yet (item-1 choice: no managed deps)")
     text = manifest.read_text(encoding="utf-8", errors="replace")
     if "lvgl/lvgl" not in text and "esp_lvgl_port" not in text:
         return Check("deps-warmed", PASS, "no managed component pins yet")

@@ -9,6 +9,8 @@ Rulings honoured:
 from __future__ import annotations
 
 import re
+import shlex
+import struct
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -25,6 +27,144 @@ SDKCONFIG_REQUIRED = (
     "CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y",
     "CONFIG_PARTITION_TABLE_CUSTOM=y",
 )
+
+# --- partition table decoding (R3: assert the built table, not just the config) ---------------
+PART_BIN_RELPATH = "partition_table/partition-table.bin"
+PART_MAGIC = 0x50AA  # ESP-IDF partition entry magic (0xAA50, little-endian on flash)
+PART_ENTRY = struct.Struct("<HBBII16sI")  # magic, type, subtype, offset, size, label[16], flags
+PART_TYPES = {0: "app", 1: "data"}
+PART_SUBTYPES = {
+    (0, 0): "factory",
+    (1, 0): "ota",
+    (1, 1): "phy",
+    (1, 2): "nvs",
+    (1, 4): "nvs_keys",
+    (1, 0x81): "fat",
+    (1, 0x82): "spiffs",
+    (1, 0x83): "littlefs",
+}
+EXPECTED_FACTORY = {"name": "factory", "type": "app", "subtype": "factory", "offset": 0x10000}
+EXPECTED_STORAGE = {"name": "storage", "type": "data", "subtype": "fat", "offset": 0x310000}
+
+
+def _size_matches(value: str, expected: int) -> bool:
+    """Accept both raw byte counts (binary decode) and gen_esp32part's '3M'/'8M' forms."""
+    text = str(value).strip().rstrip(",")
+    if text.lower().startswith("0x"):
+        try:
+            return int(text, 16) == expected
+        except ValueError:
+            return False
+    match = re.fullmatch(r"(\d+)\s*([KMG]?)", text, re.IGNORECASE)
+    if not match:
+        return False
+    number = int(match.group(1))
+    unit = match.group(2).upper()
+    multiplier = {"": 1, "K": 1024, "M": 1024 * 1024, "G": 1024 ** 3}[unit]
+    if multiplier != 1:
+        return number * multiplier == expected
+    # unit-less: bytes exactly, or KiB/MiB shorthand used by older tools
+    return number == expected or number * 1024 == expected or number * 1024 * 1024 == expected
+
+
+def _row_ok(row: dict, expected: dict, size: int) -> bool:
+    if row.get("name") != expected["name"]:
+        return False
+    if row.get("type") != expected["type"] or row.get("subtype") != expected["subtype"]:
+        return False
+    try:
+        if int(str(row.get("offset")), 0) != expected["offset"]:
+            return False
+    except (TypeError, ValueError):
+        return False
+    return _size_matches(str(row.get("size", "")), size)
+
+
+def parse_partition_binary(path: Path) -> list[dict]:
+    """Decode partition-table.bin (32-byte little-endian entries, magic 0xAA50)."""
+    rows: list[dict] = []
+    data = path.read_bytes()
+    for base in range(0, len(data) - PART_ENTRY.size + 1, PART_ENTRY.size):
+        magic, ptype, subtype, offset, size, label, _flags = PART_ENTRY.unpack_from(data, base)
+        if magic != PART_MAGIC:
+            break
+        rows.append(
+            {
+                "name": label.split(b"\0", 1)[0].decode("ascii", "replace"),
+                "type": PART_TYPES.get(ptype, str(ptype)),
+                "subtype": PART_SUBTYPES.get((ptype, subtype), hex(subtype)),
+                "offset": hex(offset),
+                "size": str(size),
+            }
+        )
+    return rows
+
+
+def parse_gen_esp32part(text: str) -> list[dict]:
+    """Parse the CSV that gen_esp32part.py prints for a binary input."""
+    rows: list[dict] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        fields = [field.strip() for field in stripped.split(",")]
+        if len(fields) < 5:
+            continue
+        rows.append(
+            {
+                "name": fields[0],
+                "type": fields[1],
+                "subtype": fields[2],
+                "offset": fields[3],
+                "size": fields[4],
+            }
+        )
+    return rows
+
+
+def read_partition_rows(ctx: Ctx, runner: Runner, bdir: Path) -> tuple[list[dict], str]:
+    """Authoritative rows: gen_esp32part.py first, binary decode second, build log last."""
+    bin_path = bdir / PART_BIN_RELPATH
+    if not bin_path.is_file():
+        return [], f"missing {bin_path}"
+    snippet = (
+        'python "$IDF_PATH/components/partition_table/gen_esp32part.py" '
+        + shlex.quote(str(bin_path))
+    )
+    try:
+        result = runner.run_idf_snippet(snippet, cwd=ctx.root, timeout=180.0)
+        if result.ok:
+            rows = parse_gen_esp32part(result.out)
+            if rows:
+                return rows, "gen_esp32part.py"
+    except Exception:  # noqa: BLE001 - fall back to the binary decoder
+        pass
+    try:
+        rows = parse_partition_binary(bin_path)
+        if rows:
+            return rows, "binary decode"
+    except OSError as exc:
+        return [], f"cannot read {bin_path}: {exc}"
+    return [], "no decodable partition rows"
+
+
+def _rows_from_build_log(ctx: Ctx, target: Target) -> list[dict]:
+    log = ctx.log_path(f"build:{target.name}")
+    if not log.is_file():
+        return []
+    rows: list[dict] = []
+    for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        fields = [field.strip() for field in stripped.split(",")]
+        if len(fields) >= 5 and fields[0] in ("factory", "storage"):
+            rows.append(
+                {"name": fields[0], "type": fields[1], "subtype": fields[2],
+                 "offset": fields[3], "size": fields[4]}
+            )
+    return rows
+
 
 ERROR_HINTS = (
     "CMake Error",
@@ -162,30 +302,44 @@ def build_target(ctx: Ctx, runner: Runner, target: Target) -> BuildOutcome:
     return build_idf(ctx, runner, target)
 
 
-def assert_sdkconfig(ctx: Ctx, target: Target, bdir: Path) -> tuple[bool, str, dict]:
+def assert_sdkconfig(ctx: Ctx, runner: Runner, target: Target, bdir: Path) -> tuple[bool, str, dict]:
     """R3: config keys + partition binary + the two partition content lines."""
     sdkconfig = bdir / "sdkconfig"
     if not sdkconfig.is_file():
         return False, f"{target.name}: no sdkconfig at {sdkconfig}", {}
     text = sdkconfig.read_text(encoding="utf-8", errors="replace")
     missing = [key for key in SDKCONFIG_REQUIRED if key not in text]
-    partition_bin = bdir / "partition_table" / "partition-table.bin"
+    partition_bin = bdir / PART_BIN_RELPATH
     problems: list[str] = []
     if missing:
         problems.append("missing keys: " + ", ".join(missing))
+    rows, source = read_partition_rows(ctx, runner, bdir)
     if not partition_bin.is_file():
         problems.append(f"missing {partition_bin}")
-    log = ctx.log_path(f"build:{target.name}")
-    log_text = log.read_text(encoding="utf-8", errors="replace") if log.is_file() else ""
-    if not FACTORY_LINE.search(log_text):
-        problems.append("factory line (0x10000, 3M) not found in build log")
-    if not STORAGE_LINE.search(log_text):
-        problems.append("storage line (0x310000, 0x800000/8M) not found in build log")
+    ok_table = (
+        any(_row_ok(row, EXPECTED_FACTORY, 3 * 1024 * 1024) for row in rows)
+        and any(_row_ok(row, EXPECTED_STORAGE, 8 * 1024 * 1024) for row in rows)
+    )
+    if not ok_table:
+        log_rows = _rows_from_build_log(ctx, target)  # OR-fallback only
+        if log_rows:
+            ok_table = (
+                any(_row_ok(row, EXPECTED_FACTORY, 3 * 1024 * 1024) for row in log_rows)
+                and any(_row_ok(row, EXPECTED_STORAGE, 8 * 1024 * 1024) for row in log_rows)
+            )
+            source = "build log (fallback)"
+    if not ok_table:
+        problems.append(
+            "partition table does not match factory@0x10000 3M + storage@0x310000 8M "
+            f"(source: {source})"
+        )
     extra = {
         "target": target.name,
         "partition_bin": str(partition_bin) if partition_bin.is_file() else None,
+        "partition_rows": rows,
+        "partition_source": source,
         "missing_keys": missing,
     }
     if problems:
         return False, f"{target.name}: " + "; ".join(problems), extra
-    return True, f"{target.name}: keys + partition table verified", extra
+    return True, f"{target.name}: keys + partition table verified ({source})", extra
