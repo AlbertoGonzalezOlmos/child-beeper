@@ -13,7 +13,7 @@
 - Build outputs go to `${CB_BUILD_ROOT:-build}/<target>`. When several agents share the tree,
   each exports `CB_BUILD_ROOT=build/<agent-name>` and never touches another agent's build dirs.
 - Flash/monitor: `./cb flash` / `./cb monitor` — they check ports **before** building and exit 2
-  (with the BOOT+RESET recovery hint) when no board is attached.
+  (with the BOOT+RESET recovery hint) when no serial port is attached.
 
 ## Layout
 

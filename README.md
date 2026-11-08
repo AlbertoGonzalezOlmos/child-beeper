@@ -5,7 +5,7 @@ Firmware toolkit for the [Waveshare ESP32-S3-LCD-1.47B](https://www.waveshare.co
 addressable RGB LED, BOOT button, battery ADC, TF slot, native USB-Serial/JTAG): a reusable board
 support package (`components/cb_bsp`) plus one example per peripheral, with an Arduino path to come.
 
-## Quickstart (no board needed)
+## Quickstart (board optional)
 
 ```bash
 ./cb doctor     # toolchain check: ESP-IDF v6.1, arduino-cli, cores, component caches
