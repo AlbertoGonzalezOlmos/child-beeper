@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Callable, Sequence
 
 from . import build as builder
+from . import deps as deps_mod
 from . import doctor, report, sizes, staticchecks
 from .context import HOST_TESTS_MAKEFILE, Ctx
 from .errors import CODE_FAIL, CODE_OK, CODE_USAGE, CbError
@@ -191,7 +192,14 @@ def verify(ctx: Ctx, runner: Runner, *, fast: bool = False) -> tuple[int, list[S
 
     steps.step("audit-static", _audit)
 
-    # 5..6. builds ------------------------------------------------------------
+    # 5. dependency pins (A9): locks + component manifest, no builds/network needed
+    def _deps_pins() -> tuple[str, str, dict]:
+        ok, detail, extra = deps_mod.check_pins(ctx)
+        return (PASS if ok else FAIL), detail, extra
+
+    steps.step("deps-pins", _deps_pins)
+
+    # 6..7. builds ------------------------------------------------------------
     idf_targets: list[Target] = []
     offline_skipped = 0
     app = app_target(ctx)

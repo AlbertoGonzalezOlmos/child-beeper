@@ -16,13 +16,23 @@ from cbchecks import report, verify
 from cbchecks.context import Ctx
 
 HINT = "hold BOOT, tap RESET, release BOOT (download mode)"
+LVGL_CONFIG = """CONFIG_LV_CONF_SKIP=y
+CONFIG_LV_COLOR_DEPTH_16=y
+CONFIG_LV_COLOR_DEPTH=16
+CONFIG_LV_OS_NONE=y
+CONFIG_LV_FONT_DEFAULT_MONTSERRAT_14=y
+CONFIG_LV_FONT_MONTSERRAT_14=y
+CONFIG_LV_USE_LABEL=y
+CONFIG_LV_USE_IMAGE=y
+"""
+
 SDKCONFIG = """CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_OCT=y
 CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 CONFIG_PARTITION_TABLE_CUSTOM=y
-"""
+""" + LVGL_CONFIG
 PARTITION_ECHO = """Partition table binary generated. Contents:
 # ESP-IDF Partition Table
 factory, app, factory, 0x10000, 3M
@@ -94,6 +104,7 @@ class TestVerifyHappyPath(TempRepoTest):
                 "cli-tests",
                 "pin-drift",
                 "audit-static",
+                "deps-pins",
                 "build:app",
                 "build:01_lcd_hello",
                 "sdkconfig-assert",
@@ -130,6 +141,7 @@ class TestVerifyHappyPath(TempRepoTest):
         self.assertEqual(by_id["doctor"].status, "PASS")
         self.assertEqual(by_id["host-tests"].status, "PASS")
         self.assertEqual(by_id["cli-tests"].status, "PASS")
+        self.assertEqual(by_id["deps-pins"].status, "PASS")
         self.assertEqual(code, 0)
 
     def test_sdkconfig_assert_detects_missing_keys(self) -> None:
@@ -345,6 +357,71 @@ class TestPartitionTableDecoding(TempRepoTest):
         )
         self.assertTrue(ok, detail)
         self.assertIn("build log", extra["partition_source"])
+
+
+class TestLvglSdkconfig(TempRepoTest):
+    """A9: LVGL config must be present and correct for app + 01_lcd_hello (absence = FAIL)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        make_repo(self.root)
+        self.ctx = ctx_for(self.root)
+        self.runner = BuildSimRunner(self.ctx)
+        self.bdir = self.ctx.build_root / "app"
+        self.bdir.mkdir(parents=True)
+        _write_partition_bin(self.bdir / "partition_table/partition-table.bin", GOOD_ROWS)
+
+    def _assert(self, text: str, target=None):
+        (self.bdir / "sdkconfig").write_text(text, encoding="utf-8")
+        return verify.builder.assert_sdkconfig(
+            self.ctx, self.runner, target or _app_target(self.ctx), self.bdir
+        )
+
+    def test_good_lvgl_config_passes(self) -> None:
+        ok, detail, extra = self._assert(SDKCONFIG)
+        self.assertTrue(ok, detail)
+        self.assertTrue(extra["lvgl_checked"])
+        self.assertEqual(extra["missing_lvgl_keys"], [])
+
+    def test_missing_lvgl_key_is_reported(self) -> None:
+        broken = SDKCONFIG.replace("CONFIG_LV_USE_IMAGE=y\n", "")
+        ok, detail, extra = self._assert(broken)
+        self.assertFalse(ok)
+        self.assertIn("CONFIG_LV_USE_IMAGE=y", detail)
+        self.assertIn("CONFIG_LV_USE_IMAGE=y", extra["missing_lvgl_keys"])
+
+    def test_lv_freertos_is_not_required_but_none_is(self) -> None:
+        broken = SDKCONFIG.replace("CONFIG_LV_OS_NONE=y", "CONFIG_LV_OS_FREERTOS=y")
+        ok, detail, extra = self._assert(broken)
+        self.assertFalse(ok)
+        self.assertIn("CONFIG_LV_OS_NONE=y", detail)
+        self.assertNotIn("CONFIG_LV_OS_FREERTOS", " ".join(extra["missing_lvgl_keys"]))
+
+    def test_minimal_config_is_forbidden(self) -> None:
+        ok, detail, extra = self._assert(SDKCONFIG + "CONFIG_LV_CONF_MINIMAL=y\n")
+        self.assertFalse(ok)
+        self.assertIn("forbidden LVGL keys", detail)
+        self.assertIn("CONFIG_LV_CONF_MINIMAL=y", extra["forbidden_lvgl_keys"])
+
+    def test_absence_of_lvgl_in_app_is_a_failure_not_a_skip(self) -> None:
+        base_only = "".join(
+            line + "\n" for line in SDKCONFIG.splitlines() if not line.startswith("CONFIG_LV_")
+        )
+        ok, detail, extra = self._assert(base_only)
+        self.assertFalse(ok)
+        self.assertIn("no CONFIG_LV_*", detail)
+        self.assertTrue(extra["lvgl_checked"])
+
+    def test_other_targets_may_omit_lvgl(self) -> None:
+        from cbchecks.targets import Target
+
+        other = Target("idf", "02_rgb", self.root / "examples" / "02_rgb")
+        base_only = "".join(
+            line + "\n" for line in SDKCONFIG.splitlines() if not line.startswith("CONFIG_LV_")
+        )
+        ok, detail, extra = self._assert(base_only, target=other)
+        self.assertTrue(ok, detail)
+        self.assertFalse(extra["lvgl_checked"])
 
 
 class TestRequiredLayout(TempRepoTest):
