@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Callable, Sequence
 
 from . import build as builder
+from . import deps as deps_mod
 from . import doctor, report, sizes, staticchecks
 from .context import HOST_TESTS_MAKEFILE, Ctx
 from .errors import CODE_FAIL, CODE_OK, CODE_USAGE, CbError
@@ -180,7 +181,11 @@ def verify(ctx: Ctx, runner: Runner, *, fast: bool = False) -> tuple[int, list[S
 
     # 4. static audit ---------------------------------------------------------
     def _audit() -> tuple[str, str, dict]:
-        findings = staticchecks.scan_forbidden(ctx) + staticchecks.scan_abs_paths(ctx)
+        findings = (
+            staticchecks.scan_forbidden(ctx)
+            + staticchecks.scan_abs_paths(ctx)
+            + staticchecks.scan_lcd_invariants(ctx)
+        )
         if findings:
             sample = "; ".join(f.render() for f in findings[:5])
             more = f" (+{len(findings) - 5} more)" if len(findings) > 5 else ""
@@ -191,7 +196,14 @@ def verify(ctx: Ctx, runner: Runner, *, fast: bool = False) -> tuple[int, list[S
 
     steps.step("audit-static", _audit)
 
-    # 5..6. builds ------------------------------------------------------------
+    # 5. dependency pins (A9): locks + component manifest, no builds/network needed
+    def _deps_pins() -> tuple[str, str, dict]:
+        ok, detail, extra = deps_mod.check_pins(ctx)
+        return (PASS if ok else FAIL), detail, extra
+
+    steps.step("deps-pins", _deps_pins)
+
+    # 6..7. builds ------------------------------------------------------------
     idf_targets: list[Target] = []
     offline_skipped = 0
     app = app_target(ctx)

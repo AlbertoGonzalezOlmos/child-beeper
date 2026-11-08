@@ -82,6 +82,34 @@ class FakeRunner(Runner):
 def make_repo(tmp: Path, *, app: bool = True, examples: tuple[str, ...] = ("01_lcd_hello",),
               arduino: bool = False, host_tests: bool = True) -> Path:
     """Create a minimal fake repository tree (no build, no network)."""
+    # deps-pins fixtures: exact pins so the happy path is green and negatives can be applied.
+    lock = (
+        "dependencies:\n"
+        "  cb_bsp:\n"
+        "    source:\n"
+        "      path: components/cb_bsp\n"
+        "      type: local\n"
+        "    version: '*'\n"
+        "  espressif/esp_lvgl_port:\n"
+        "    dependencies:\n"
+        "    - name: lvgl/lvgl\n"
+        "      version: '>=8,<10'\n"
+        "    version: 2.9.0\n"
+        "  espressif/led_strip:\n"
+        "    version: 3.1.1\n"
+        "  idf:\n"
+        "    version: 6.1.0\n"
+        "  lvgl/lvgl:\n"
+        "    version: 9.5.0\n"
+    )
+    manifest = (
+        "dependencies:\n"
+        "  idf: '>=6.1.0,<6.2.0'\n"
+        "  lvgl/lvgl: '9.5.0'\n"
+        "  espressif/esp_lvgl_port: '2.9.0'\n"
+        "  espressif/led_strip: '3.1.1'\n"
+    )
+    lock_dir_root = tmp
     tmp.mkdir(parents=True, exist_ok=True)
     (tmp / "LICENSE").write_text("test\n", encoding="utf-8")
     (tmp / "eim_config.toml").write_text('path = "/tmp/fake"\n', encoding="utf-8")
@@ -96,6 +124,8 @@ def make_repo(tmp: Path, *, app: bool = True, examples: tuple[str, ...] = ("01_l
             'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="config/partitions.csv"\n', encoding="utf-8"
         )
     for name in examples:
+        (tmp / "examples" / name).mkdir(parents=True, exist_ok=True)
+        (tmp / "examples" / name / "dependencies.lock").write_text(lock, encoding="utf-8")
         base = tmp / "examples" / name / "main"
         base.mkdir(parents=True, exist_ok=True)
         (tmp / "examples" / name / "CMakeLists.txt").write_text(
@@ -109,6 +139,9 @@ def make_repo(tmp: Path, *, app: bool = True, examples: tuple[str, ...] = ("01_l
             'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="../../config/partitions.csv"\n', encoding="utf-8"
         )
     (tmp / "tools" / "tests").mkdir(parents=True, exist_ok=True)
+    (tmp / "dependencies.lock").write_text(lock, encoding="utf-8")
+    (tmp / "components" / "cb_bsp").mkdir(parents=True, exist_ok=True)
+    (tmp / "components" / "cb_bsp" / "idf_component.yml").write_text(manifest, encoding="utf-8")
     if host_tests:
         host = tmp / "tests" / "host"
         host.mkdir(parents=True, exist_ok=True)

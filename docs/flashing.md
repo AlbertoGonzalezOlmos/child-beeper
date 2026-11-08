@@ -27,8 +27,9 @@ bridge chip. Consequences:
 ./cb ports --json          # machine-readable
 ./cb flash --target app            # guard → build → idf.py flash
 ./cb flash --target 01_lcd_hello --port /dev/ttyACM0
-./cb monitor               # idf.py monitor (quit: Ctrl-])
-./cb monitor --port /dev/ttyACM0
+./cb monitor               # live stream; Ctrl-] quits
+./cb monitor --port /dev/ttyACM0 --target 01_lcd_hello   # follow the FLASHED target: its build
+                           # dir supplies the ELF for backtrace decoding + idf_monitor's image check
 ./cb selftest              # (item 6+) flash+run the self-test and parse its serial contract
 ```
 
@@ -44,7 +45,12 @@ Arduino uploads go through `./cb arduino` / the IDE with the same FQBN (item 7+)
   true early boot log.
 - `./cb monitor` streams live (`cb: monitoring — press Ctrl-] to quit`; it warns when stdin is not
   a terminal, because then Ctrl-] may not reach the monitor). A raw `cat /dev/ttyACM0` shows the
-  same stream (heartbeats every 2 s).
+  same stream (heartbeats every 2 s). `--target <T>` selects which build dir's ELF the monitor
+  uses (default `app`).
+- idf_monitor's **"Checksum mismatch between flashed and built applications"** warning is
+  **cosmetic**: the monitor's ELF is not byte-identical to the flashed image — expected when
+  monitoring a different target than was flashed (pass `--target`) or after any rebuild (the app
+  descriptor embeds build time/git SHA). The console stream and resets are unaffected.
 
 ## The no-board guard (exit code 2)
 

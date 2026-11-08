@@ -22,6 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from cbchecks import binaries as binaries_mod  # noqa: E402
 from cbchecks import build as builder  # noqa: E402
 from cbchecks import doctor as doctor_mod  # noqa: E402
 from cbchecks import ports as ports_mod  # noqa: E402
@@ -238,6 +239,15 @@ def cmd_flash(args: argparse.Namespace) -> int:
     )
     _print(result.out)
     _print(result.err, err=True)
+    if result.ok:
+        elf = binaries_mod.elf_info(outcome.build_dir)
+        record = binaries_mod.write_flash_record(
+            ctx, build_dir=outcome.build_dir, elf=elf, port=port, target=target.name
+        )
+        _print(
+            f"cb: recorded flash: target {target.name} -> {record}"
+            + (f" (elf sha256 {elf.sha256[:12]}…)" if elf else " (no ELF found in the build dir)")
+        )
     return CODE_OK if result.ok else CODE_FAIL
 
 
@@ -245,16 +255,29 @@ def cmd_flash(args: argparse.Namespace) -> int:
 def cmd_monitor(args: argparse.Namespace) -> int:
     ctx = load_ctx()
     port = ports_mod.guard_port(args.port)
-    target = targets_mod.resolve(ctx, [targets_mod.APP_NAME])[0]
+    # RULED (item-2 review fixes): monitor must follow the flashed target, not always the root app —
+    # panic backtrace decoding and idf_monitor's ELF hash check use this build dir's ELF.
+    target = targets_mod.resolve(ctx, [args.target or targets_mod.APP_NAME])[0]
+    if not target.is_idf:
+        raise UsageError(f"cannot monitor {target.name}: not an IDF target")
+    build_dir = targets_mod.build_dir(ctx, target)
+    elf = binaries_mod.elf_info(build_dir)
     if not os.isatty(0):
         _print("cb: warning: stdin is not a terminal — Ctrl-] may not reach the monitor", err=True)
-    _print("cb: monitoring — press Ctrl-] to quit")
+    _print(f"cb: monitoring target {target.name} — press Ctrl-] to quit")
+    if elf is not None:
+        _print(f"cb: monitor uses {elf.path} (sha256 {elf.sha256})")
+    else:
+        _print(f"cb: warning: no ELF in {build_dir} — build the target first (./cb build {target.name})", err=True)
+    note = binaries_mod.monitor_mismatch_note(ctx, target=target.name, elf=elf)
+    if note:
+        _print(note)
     runner = Runner(ctx)
     streamed = runner.monitor_live(
         [
             "-C", str(target.path),
-            "-B", str(targets_mod.build_dir(ctx, target)),
-            f"-DSDKCONFIG={targets_mod.build_dir(ctx, target) / 'sdkconfig'}",
+            "-B", str(build_dir),
+            f"-DSDKCONFIG={build_dir / 'sdkconfig'}",
             "-p", port,
             "monitor",
         ],
@@ -468,6 +491,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("monitor", help="open the serial monitor (guarded)")
     p.add_argument("--port")
+    p.add_argument("--target", help="IDF target whose build dir/ELF monitor uses (default: app)")
     p.set_defaults(func=cmd_monitor)
 
     p = sub.add_parser("selftest", help="flash the selftest and check the serial contract (guarded)")

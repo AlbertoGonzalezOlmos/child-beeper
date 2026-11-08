@@ -19,6 +19,24 @@ from .proc import Runner
 from .sizes import artifacts, primary_bin
 from .targets import ARD_FQBN, Target, build_dir
 
+# ITEM2 ruling A9: these two targets are the display stack; LVGL config must be present and correct
+# there (absence is a FAIL, not a skip). Other targets keep the presence-conditional behaviour.
+LVGL_REQUIRED_TARGETS = ("app", "01_lcd_hello")
+
+SDKCONFIG_LVGL_KEYS = (
+    ("CONFIG_LV_CONF_SKIP=y", "LVGL configured by Kconfig (no stray lv_conf.h)"),
+    ("CONFIG_LV_COLOR_DEPTH_16=y", "RGB565, matches the 16-bit SPI panel"),
+    ("CONFIG_LV_COLOR_DEPTH=16", "derived colour-depth value"),
+    ("CONFIG_LV_OS_NONE=y", "esp_lvgl_port owns the LVGL task (LV_OS_FREERTOS must not be set)"),
+    ("CONFIG_LV_FONT_DEFAULT_MONTSERRAT_14=y", "default font selected"),
+    ("CONFIG_LV_FONT_MONTSERRAT_14=y", "default font compiled in"),
+    ("CONFIG_LV_USE_LABEL=y", "01_lcd_hello draws a text label"),
+    ("CONFIG_LV_USE_IMAGE=y", "01_lcd_hello draws the diagnostic pattern as an lv_image"),
+)
+SDKCONFIG_LVGL_FORBIDDEN = (
+    ("CONFIG_LV_CONF_MINIMAL=y", "minimal config drops the fonts/widgets the example needs"),
+)
+
 SDKCONFIG_REQUIRED = (
     "CONFIG_SPIRAM=y",
     "CONFIG_SPIRAM_MODE_OCT=y",
@@ -197,6 +215,9 @@ STORAGE_LINE = re.compile(
 )
 
 
+SIZES_PLACEHOLDER = {"bin": None, "bin_bytes": None, "source": "not-built", "fallback": True}
+
+
 @dataclass
 class BuildOutcome:
     ok: bool
@@ -265,9 +286,12 @@ def build_idf(ctx: Ctx, runner: Runner, target: Target, *, timeout: float = 3600
     else:
         reason = extract_error((result.out or "") + (result.err or "")) or result.tail(4) or "(no output)"
         detail = f"build failed: {reason} (log {log})"
-    extra: dict = {"build_dir": str(bdir), "log": str(log)}
-    if binary is not None:
-        extra["artifacts"] = artifacts(bdir)
+    extra: dict = {
+        "build_dir": str(bdir),
+        "log": str(log),
+        "artifacts": artifacts(bdir),          # always a list (empty when nothing was produced)
+        "sizes": dict(SIZES_PLACEHOLDER),      # replaced by idf.py size / .bin measurement on success
+    }
     return BuildOutcome(ok, target, bdir, log, detail, extra)
 
 
@@ -293,13 +317,29 @@ def build_arduino(ctx: Ctx, runner: Runner, target: Target) -> BuildOutcome:
     else:
         reason = extract_error((result.out or "") + (result.err or "")) or result.tail(4)
         detail = f"compile failed: {reason} (log {log})"
-    return BuildOutcome(ok, target, bdir, log, detail, {"build_dir": str(bdir), "log": str(log)})
+    return BuildOutcome(
+        ok,
+        target,
+        bdir,
+        log,
+        detail,
+        {
+            "build_dir": str(bdir),
+            "log": str(log),
+            "artifacts": artifacts(bdir),
+            "sizes": dict(SIZES_PLACEHOLDER),
+        },
+    )
 
 
 def build_target(ctx: Ctx, runner: Runner, target: Target) -> BuildOutcome:
     if target.kind == "arduino":
         return build_arduino(ctx, runner, target)
     return build_idf(ctx, runner, target)
+
+
+def lvgl_present(sdkconfig_text: str) -> bool:
+    return "CONFIG_LV_" in sdkconfig_text
 
 
 def assert_sdkconfig(ctx: Ctx, runner: Runner, target: Target, bdir: Path) -> tuple[bool, str, dict]:
@@ -309,10 +349,24 @@ def assert_sdkconfig(ctx: Ctx, runner: Runner, target: Target, bdir: Path) -> tu
         return False, f"{target.name}: no sdkconfig at {sdkconfig}", {}
     text = sdkconfig.read_text(encoding="utf-8", errors="replace")
     missing = [key for key in SDKCONFIG_REQUIRED if key not in text]
+    lvgl_checked = lvgl_present(text) or target.name in LVGL_REQUIRED_TARGETS
+    missing_lvgl: list[str] = []
+    forbidden_lvgl: list[str] = []
+    if lvgl_checked:
+        if not lvgl_present(text):
+            # A9: for app/01_lcd_hello the absence of LVGL config is a failure, not a skip.
+            missing_lvgl = ["<no CONFIG_LV_* in sdkconfig: LVGL is not in this build>"]
+        else:
+            missing_lvgl = [key for key, _why in SDKCONFIG_LVGL_KEYS if key not in text]
+        forbidden_lvgl = [key for key, _why in SDKCONFIG_LVGL_FORBIDDEN if key in text]
     partition_bin = bdir / PART_BIN_RELPATH
     problems: list[str] = []
     if missing:
         problems.append("missing keys: " + ", ".join(missing))
+    if missing_lvgl:
+        problems.append("missing LVGL keys: " + ", ".join(missing_lvgl))
+    if forbidden_lvgl:
+        problems.append("forbidden LVGL keys: " + ", ".join(forbidden_lvgl))
     rows, source = read_partition_rows(ctx, runner, bdir)
     if not partition_bin.is_file():
         problems.append(f"missing {partition_bin}")
@@ -339,7 +393,11 @@ def assert_sdkconfig(ctx: Ctx, runner: Runner, target: Target, bdir: Path) -> tu
         "partition_rows": rows,
         "partition_source": source,
         "missing_keys": missing,
+        "lvgl_checked": lvgl_checked,
+        "missing_lvgl_keys": missing_lvgl,
+        "forbidden_lvgl_keys": forbidden_lvgl,
     }
     if problems:
         return False, f"{target.name}: " + "; ".join(problems), extra
-    return True, f"{target.name}: keys + partition table verified ({source})", extra
+    lvgl_note = " + LVGL" if lvgl_checked else ""
+    return True, f"{target.name}: keys{lvgl_note} + partition table verified ({source})", extra
