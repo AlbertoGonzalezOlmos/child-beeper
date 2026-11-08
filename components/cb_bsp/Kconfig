@@ -1,0 +1,4 @@
+# components/cb_bsp/Kconfig — Child Beeper BSP configuration.
+#
+# Item 1 ships NO Kconfig knobs (CONTRACT R5). Knobs are deferred to items 4
+# (IMU) and 5 (SD), which own them and extend this file via the review round.
