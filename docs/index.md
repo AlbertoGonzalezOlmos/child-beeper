@@ -49,8 +49,9 @@ With a board attached (first session done 2026-11-08 — checklist in
 cb                            # bash shim → tools/cb.py (Python 3 stdlib CLI)
 CMakeLists.txt  main/         # root IDF app ("hello beeper")
 components/cb_bsp/            # the BSP: CMakeLists, include/ (frozen headers), src/
+                              #   item 2 adds cb_lcd, cb_backlight, cb_pattern
 config/                       # sdkconfig.board.defaults + partitions.csv (3M factory, 8M FAT)
-examples/01_lcd_hello/        # canonical example-project pattern (skeleton in item 1)
+examples/01_lcd_hello/        # canonical example pattern; item 2: display diagnostic app
 tests/host/                   # host-compiled unit tests (pins, math, button FSM)
 tools/                        # cb.py + cbchecks/ (verify pipeline, static audits)
 docs/                         # this directory
@@ -63,7 +64,7 @@ arduino/                      # item 7: staged CBBoard library + sketches (absen
 |---|---|---|---|---|
 | Lifecycle/version | `cb_bsp_init` | root app | item 1 | ✓ boot + console + 11 min soak (2026-11-08) |
 | Pins/math/FSM/QMI regs (pure, host-tested) | `cb_pins.h`, `cb_math`, `cb_button_fsm`, `cb_qmi8658_regs` | `tests/host` | item 1 | n/a (logic) |
-| LCD + LVGL 9.5 + backlight | item 2 | `01_lcd_hello` (skeleton only in item 1) | item 2 | ✗ |
+| LCD + LVGL 9.5 + backlight + pattern | `cb_lcd`, `cb_backlight`, `cb_pattern` | `01_lcd_hello` diagnostic | item 2 (2026-11-08) | ✗ pending orchestrator flash |
 | RGB LED, BOOT button, battery | item 3 | `02_rgb_button`, `03_battery` | item 3 | ✗ |
 | IMU QMI8658 (new `i2c_master`) | item 4 | `04_imu` | item 4 | ✗ |
 | TF card (SDMMC, no auto-format) | item 5 | `05_sdcard` | item 5 | ✗ |

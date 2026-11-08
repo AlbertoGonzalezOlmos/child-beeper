@@ -55,24 +55,37 @@ Steps run in a **fixed order** with **stable ids**; each prints `[PASS]/[FAIL]/[
    `esp32:esp32` 3.3.12, disk space, serial ports). **No board is a WARN here, never a FAIL.**
 2. `host-tests` — `make -C tests/host test`; binary at `${CB_BUILD_ROOT:-build}/host/run_tests`;
    TAP-ish output (`ok - <name>` / `not ok - <name>` / final `1..N`). Covers the pin-macro contract,
-   `cb_math` (duty clamp, LE decode, scale math, ADC conversion) and `cb_button_fsm` (single click,
-   double click, long press, bounce, injected time).
-3. `pin-drift` — byte-compares Arduino copies of the shared headers against
-   `components/cb_bsp/include/`. **SKIP while `arduino/` is absent (all of item 1).**
-4. `audit-static` — forbidden constructs + absolute-path scan (scope below).
-5. `cli-tests` — the CLI's own unit tests:
+   `cb_math` (duty clamp, LE decode, scale math, ADC conversion), `cb_button_fsm` (single click,
+   double click, long press, bounce, injected time) and — from item 2 — `cb_pattern`
+   (exact-pixel palette, bar boundaries, ramp endpoints, 2×2 corner markers, stride/OOB guards).
+3. `cli-tests` — the CLI's own unit tests:
    `python3 -m unittest discover -s tools/tests -t . -q` (a missing `tools/tests/` is a FAIL,
    owner deepseek-flash).
-6. `build:app` — builds the root app (`main/` "hello beeper").
-7. `build:<example>` — one step per `examples/*` (item 1: `build:01_lcd_hello`).
-8. `sdkconfig-assert` — per built target: OCT PSRAM, PSRAM 80 M, 16 MB flash, USB-Serial/JTAG
+4. `pin-drift` — byte-compares Arduino copies of the shared headers against
+   `components/cb_bsp/include/`. **SKIP while `arduino/` is absent.**
+5. `audit-static` — forbidden constructs + absolute-path scan (scope below).
+6. `deps-pins` — every committed `dependencies.lock` must resolve **lvgl 9.5.0**,
+   **esp_lvgl_port 2.9.0**, **led_strip 3.1.1**, **idf 6.1.0**, and
+   `components/cb_bsp/idf_component.yml` must pin those three exactly (no `^`/`~`/`>=` ranges).
+   A missing/stale lock FAILs with a `./cb deps` hint — run `./cb deps` once after any
+   manifest/lock change (ruling A9).
+7. `build:app` — builds the root app (`main/` "hello beeper").
+8. `build:<example>` — one step per `examples/*` (currently `build:01_lcd_hello`).
+9. `sdkconfig-assert` — per built target: OCT PSRAM, PSRAM 80 M, 16 MB flash, USB-Serial/JTAG
    console, custom partition table; plus the built partition binary exists and the table contains
    `factory,app,factory,0x10000,3M` and `storage,data,fat,0x310000,0x800000`.
-9. `arduino:<sketch>` — while `arduino/` is absent (all of item 1) a single **synthetic step id
-   `arduino:*`** is emitted as SKIP instead of per-sketch steps.
-10. `guards-no-board` — runs `./cb flash` / `./cb monitor` with `CB_FORCE_NO_PORTS=1`; both must
+   **For `app` and `01_lcd_hello` it additionally requires** (A9): `CONFIG_LV_CONF_SKIP=y`,
+   `CONFIG_LV_COLOR_DEPTH_16=y`, `CONFIG_LV_COLOR_DEPTH=16`, `CONFIG_LV_OS_NONE=y`,
+   `CONFIG_LV_FONT_DEFAULT_MONTSERRAT_14=y`, `CONFIG_LV_FONT_MONTSERRAT_14=y`,
+   `CONFIG_LV_USE_LABEL=y`, `CONFIG_LV_USE_IMAGE=y`; and **forbids** `CONFIG_LV_CONF_MINIMAL=y`.
+   Absence of any `CONFIG_LV_` config in those two targets is a **FAIL, not a skip**.
+   (`CONFIG_LV_OS_NONE=y` is deliberate: esp_lvgl_port owns the LVGL task; demanding an
+   `LV_OS_FREERTOS`-style setting would fail a correct build.)
+10. `arduino:<sketch>` — while `arduino/` is absent a single **synthetic step id `arduino:*`** is
+    emitted as SKIP instead of per-sketch steps.
+11. `guards-no-board` — runs `./cb flash` / `./cb monitor` with `CB_FORCE_NO_PORTS=1`; both must
     exit **2** with the BOOT+RESET recovery hint, without invoking any build or esptool.
-11. `report` — writes `${CB_BUILD_ROOT:-build}/verify-report.md` and `.json` (per-step status,
+12. `report` — writes `${CB_BUILD_ROOT:-build}/verify-report.md` and `.json` (per-step status,
     durations, app sizes via `idf.py size --format json` when it succeeds, `.bin`-size fallback
     otherwise). `./cb report` prints the markdown.
 
@@ -116,6 +129,9 @@ are all present in the local caches — see [troubleshooting.md](troubleshooting
   contract-checked by host tests; the electrical truth is a hardware-day item). Chip identity,
   flash size and PSRAM presence **are** now hardware-verified (above).
 - Early-boot log content (dropped by USB re-enumeration — use the one-shot boot-summary line).
+- Code-level display facts: backlight duty-0-at-init, the `LV_EVENT_REFR_READY` bring-up hook,
+  `cb_bsp_init` idempotency, LVGL port defaults — proven by code review + compiling, not by gate
+  steps (the gate deliberately does not fake these with source greps).
 - Anything under `arduino/` until item 7 lands.
 
 `./cb monitor` itself is a live pass-through: it prints `cb: monitoring — press Ctrl-] to quit`,
@@ -134,14 +150,27 @@ Procedure per line: run the command, compare with "expected", tick and fill in d
       (`alive #323`) with no WDT/reset — **verified 2026-11-08**. The true early-boot lines
       (banner/WARN) are dropped by USB re-enumeration — see "Hardware status" above.
 - [ ] 3. **Boot summary**: after a fresh flash/reset, the first heartbeat carries the one-shot
-      `boot summary: reset=… cb_bsp=0.1.0 init(CB_PART_ALL)=ESP_ERR_NOT_SUPPORTED idf=…` line
-      (pending — observe at the next flash).
+      `boot summary: reset=… cb_bsp=0.1.0 init(CB_PART_ALL)=… idf=…` line. Expected value
+      **from item 2 on: `ESP_OK`** (A6 — strict LCD/LVGL parts implemented; RGB/I2C/IMU/BUTTON/
+      BATTERY/SD still WARN `not implemented`). The item-1 flashes showed
+      `ESP_ERR_NOT_SUPPORTED` — historical (pending — observe at the next flash).
 - [x] 4. Guard logic with the board attached: `CB_FORCE_NO_PORTS=1 ./cb flash` → exit **2** +
       BOOT/RESET hint — **verified** via `./cb verify` step `guards-no-board`.
 - [ ] 5. Recovery: hold **BOOT**, tap **RESET**, release **BOOT** → download mode; flash succeeds
       (**pending — needs a physical press**).
-- [ ] 6. (item 2+) `./cb flash --target 01_lcd_hello` → colour bars reach all four edges, corner
-      markers visible, no 34-px shift, red bar is red (proves x-gap/colour order/inversion).
+- [ ] 6. (item 2) **Display diagnostic** — `./cb flash --target 01_lcd_hello`, then check:
+      - serial: `display: 172x320 ST7789, spi2 @40MHz, gap(34,0), lvgl 9.5` once, then
+        `lcd_hello: frame N` every 2 s (A5 — exact strings);
+      - 8 vertical bars, left→right: **white, yellow, cyan, green, magenta, red, blue, black**
+        (red↔blue swap ⇒ element order wrong; garbled hues ⇒ byte-swap wrong);
+      - four **2×2 corner markers**: TL red, TR yellow, BL cyan, BR magenta — all four visible at
+        the very corners (any missing/shifted ⇒ x-gap 34 or mirroring wrong; A4 layout);
+      - bottom **grey ramp** runs black→white left→right over the last `height/16` rows;
+      - white bar paper-white, black bar truly black (inverted ⇒ `invert_color` wrong);
+      - resolution label legible near the bottom centre, not covering the corner markers;
+      - **no white flash at boot** — backlight stays dark until the first LVGL frame, then comes
+        on at 100 % (A2 bring-up hook);
+      - sustained frames show no tearing/corruption (PSRAM-DMA runtime proof, A7/A10 flags).
 - [ ] 7. (item 3+) Battery reading within ±5 % of a multimeter; RGB visible but dim-capped;
       button: CLICK arrives ~350 ms after release, a double click yields RELEASE then DOUBLE_CLICK,
       hold ≥800 ms yields LONG_PRESS once and no click on release.

@@ -1,9 +1,9 @@
-# BSP API reference (item 1 — frozen surface)
+# BSP API reference (items 1–2 — frozen surface)
 
-> Status: build-verified (item 1, 2026-11-08); runtime behaviour is **not hardware-verified** —
-> see [verification.md](verification.md). Only the names on this page are frozen by the item-1
-> contract; driver APIs for LCD/RGB/IMU/SD are added in items 2–6 via review rounds. Do not invent
-> `cb_*` names ahead of their item.
+> Status: build-verified (item 2, display stack); runtime behaviour is **not hardware-verified**
+> until the orchestrator's flash session — see [verification.md](verification.md). Only the names
+> on this page are frozen (item-1 contract + item-2 rulings A1–A10); driver APIs for RGB/IMU/SD
+> are added in items 3–6 via review rounds. Do not invent `cb_*` names ahead of their item.
 
 Component: `components/cb_bsp` (local IDF component). Consumers depend on it by path, e.g.
 `examples/<NN>/main/idf_component.yml`:
@@ -138,9 +138,87 @@ Porting rules (vendor bugs explicitly **not** inherited — see
 - The driver probes **both** I2C addresses (`CB_QMI_ADDR_0 0x6A`, `CB_QMI_ADDR_1 0x6B`) with
   `i2c_master_probe()` and logs which answered; WHO_AM_I mismatch is a WARN, not a hard fail.
 
-## Threading / LVGL rules (for later items)
+## Display stack (item 2 — rulings A1/A2/A4/A7/A8)
 
-- LVGL is not thread-safe: once item 2 lands the display, touch LVGL objects only inside the
-  port lock (`lvgl_port_lock()/unlock()` or the BSP wrapper that replaces it).
+### `cb_lcd.h` — exactly six public symbols (A1)
+
+```c
+#include "esp_err.h"  /* + esp_lcd_panel_ops.h, lvgl.h, stdbool.h, stdint.h */
+esp_err_t cb_lcd_init(void);                  /* SPI2 + panel; idempotent */
+esp_err_t cb_lcd_init_lvgl(void);             /* port + display; requires cb_lcd_init(); idempotent */
+esp_lcd_panel_handle_t cb_lcd_panel(void);
+lv_display_t *cb_lcd_lvgl_display(void);      /* NULL until the port is up */
+bool cb_lcd_lvgl_lock(uint32_t timeout_ms);   /* wraps lvgl_port_lock; 0 = wait forever */
+void cb_lcd_lvgl_unlock(void);
+```
+
+- `cb_lcd_init()` brings up the panel only, in the frozen order: SPI2 bus @ `CB_LCD_PIXEL_CLK_HZ`
+  (SCLK/MOSI from `cb_pins.h`, `max_transfer_sz = CB_LCD_H_RES*80*2`) → `esp_lcd_new_panel_io_spi`
+  (CS/DC, mode 0, 8-bit cmd/param, queue 10) → `esp_lcd_new_panel_st7789`
+  (`rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB`, 16 bpp, RST pin) → `reset` → `init` →
+  `esp_lcd_panel_set_gap(panel, CB_LCD_X_GAP, CB_LCD_Y_GAP)` → `invert_color(true)` →
+  `disp_on_off(true)`. Idempotent; returns errors (never aborts); the `.c` file carries
+  `_Static_assert(CB_LCD_SPI_HOST == SPI2_HOST)` (ruling 1 — no raw enum casts).
+- `cb_lcd_init_lvgl()` without a successful `cb_lcd_init()` returns **`ESP_ERR_INVALID_STATE`**
+  (no implicit panel bring-up). On success: `lvgl_port_init(ESP_LVGL_PORT_INIT_CONFIG())` —
+  **unmodified defaults (A7, verified)**: `task_priority 4`, `task_stack 7168`,
+  `task_max_sleep_ms 500`, `timer_period_ms 5` — then `lvgl_port_add_disp` with
+  `buffer_size = CB_LCD_H_RES * 40` **pixels**, `double_buffer = true`,
+  `LV_COLOR_FORMAT_RGB565`, flags `buff_dma + buff_spiram + swap_bytes` (buffers in OCT PSRAM).
+  Port-init and display-add success are tracked separately (A8) so a failed `add_disp` can be
+  retried without spawning a second LVGL task.
+- **Examples must not include `esp_lvgl_port.h`** — the six symbols above are the whole surface;
+  all LVGL access goes through `cb_lcd_lvgl_lock()/unlock()`.
+
+### `cb_backlight.h` (A2)
+
+```c
+esp_err_t cb_backlight_init(void);  /* LEDC CB_LCD_BL_PWM_HZ (4 kHz) / 10-bit on CB_PIN_LCD_BL;
+                                       starts at DUTY 0 (GPIO46 strapping: no white flash);
+                                       idempotent */
+void cb_backlight_set(int percent); /* clamps 0..100; duty via cb_math_duty_from_percent(percent,
+                                       CB_MATH_BACKLIGHT_MAX) → 100 % = 1023, never 1024;
+                                       logged no-op before init */
+int  cb_backlight_get(void);        /* last set percent */
+```
+
+**Bring-up is owned by `cb_lcd`**: after `lvgl_port_add_disp` succeeds it registers a one-shot
+`LV_EVENT_REFR_READY` callback that calls `cb_backlight_set(CB_BACKLIGHT_ON_PERCENT)` once
+(`#define CB_BACKLIGHT_ON_PERCENT 100` in `cb_lcd.c`). Examples must **not** enable the backlight
+themselves; they may dim it later.
+
+### `cb_pattern.h` — pure pixel-pattern generator (no IDF/LVGL includes; host-tested)
+
+```c
+void cb_pattern_fill_diagnostic(uint16_t *dst, int width, int height);
+void cb_pattern_fill_solid(uint16_t *dst, int width, int height, uint16_t rgb565);
+uint16_t cb_pattern_bar_color(int index);   /* index 0..7 */
+```
+
+Frozen layout (A4): 8 vertical bars, index `(int)((int64_t)x * 8 / width)`, palette
+`0xFFFF, 0xFFE0, 0x07FF, 0x07E0, 0xF81F, 0xF800, 0x001F, 0x0000` (white, yellow, cyan, green,
+magenta, red, blue, black); bottom grey ramp of `height/16` rows with `v = x*255/(width-1)`;
+then four **2×2 corner markers** drawn last (TL red `0xF800`, TR yellow `0xFFE0`, BL cyan
+`0x07FF`, BR magenta `0xF81F`). Output is **native-endian RGB565**, row-major, packed stride
+`width*2` bytes; NULL or width/height ≤ 16 is a no-op; out-of-range palette index returns
+`0x0000`. No manual byte swap — the panel path's `swap_bytes` belongs to the LVGL port flush.
+
+### `cb_bsp_init` deltas (item 2)
+
+- `CB_PART_BACKLIGHT` → `cb_backlight_init` (optional); `CB_PART_LCD` → `cb_lcd_init` (strict,
+  panel only); `CB_PART_LVGL` → `cb_lcd_init_lvgl` (strict, adds the LVGL port; requires LCD).
+  Order and strict/optional policy unchanged.
+- **From item 2, `cb_bsp_init(CB_PART_ALL)` returns `ESP_OK` on a good board** (A6): the strict
+  parts are implemented; RGB/I2C/IMU/BUTTON/BATTERY/SD still log WARN `not implemented`.
+- Idempotency (brief ruling 3): a second call logs “already initialized” per part and returns
+  `ESP_OK`; failed parts are not marked, so a later call retries them.
+
+## Threading / LVGL rules
+
+- LVGL is not thread-safe: touch LVGL objects **only** inside
+  `cb_lcd_lvgl_lock(timeout_ms)` / `cb_lcd_lvgl_unlock()` (`timeout_ms = 0` waits forever).
+  The LVGL task is owned by `esp_lvgl_port` (priority 4) — never call `lv_timer_handler()`
+  yourself, and keep `CONFIG_LV_OS_NONE=y` (asserted by `./cb verify`).
+- The `LV_EVENT_REFR_READY` backlight hook runs inside the LVGL task; LEDC calls are task-safe.
 - The led_strip device is not re-entrant: item 3 wraps set+refresh in a mutex.
-- The BSP starts no hidden tasks other than the documented button timer (item 3).
+- The BSP starts no hidden tasks other than the LVGL port task and (item 3) the button timer.

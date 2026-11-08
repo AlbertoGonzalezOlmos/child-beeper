@@ -1,8 +1,9 @@
 # Hardware reference — Waveshare ESP32-S3-LCD-1.47B
 
-> Status (updated 2026-11-08, board attached): chip identity, flash size and PSRAM presence are
-> now **hardware-verified** (see below); every peripheral behaviour on this page is still
-> **build-verified only** until the checklist in [verification.md](verification.md) ticks it.
+> Status (updated for item 2): chip identity, flash size, PSRAM presence, console and app boot are
+> **hardware-verified** (item 1, see below); the display stack (LCD/backlight/LVGL) is
+> **build-verified (item 2), hardware pending** the orchestrator's flash; every other peripheral
+> behaviour stays build-verified only until [verification.md](verification.md) ticks it.
 > Pin values mirror the frozen header `components/cb_bsp/include/cb_pins.h`.
 
 ## Board / SoC
@@ -64,17 +65,30 @@ Other frozen constants: `CB_LCD_SPI_HOST 1` (= `SPI2_HOST`; the skeleton-verifie
   The backlight may **flicker briefly at boot** regardless of software; the BSP starts the PWM at
   duty 0 (item 2) to keep the flash-on-boot as short as possible.
 
-## LCD (ST7789, 172×320)
+## LCD (ST7789, 172×320) — bring-up facts (item 2, build-verified)
 
 - The ST7789 GRAM is 240 px wide; this panel is 172 px → the driver must call
   `esp_lcd_panel_set_gap(panel, 34, 0)` (`CB_LCD_X_GAP 34`, `CB_LCD_Y_GAP 0`). Without the gap the
-  image is shifted/cropped (hardware-day check #4).
-- Colour inversion **on** (`esp_lcd_panel_invert_color(panel, true)`), element order RGB, 16 bpp
-  RGB565 with byte swap in the LVGL pipeline — the exact combination of the verified skeleton:
-  SPI2 @ 40 MHz, panel-io CS 42 / DC 41, SPI mode 0, 8-bit cmd/param, queue depth 10; LEDC 4 kHz
-  10-bit backlight (duty max 1023, `CB_MATH_BACKLIGHT_MAX`).
-- LVGL 9.5 via `esp_lvgl_port` 2.9.0: double buffer 172×40 px, `buff_dma` + `buff_spiram`,
-  `swap_bytes` (PSRAM/DMA runtime behaviour is a hardware-day item).
+  image is shifted/cropped (hardware-day check).
+- Frozen panel bring-up order (`cb_lcd_init`, from the verified skeleton): SPI2 bus @ 40 MHz
+  (SCLK 40 / MOSI 45, `max_transfer_sz = CB_LCD_H_RES*80*2`) → `esp_lcd_new_panel_io_spi`
+  (CS 42 / DC 41, SPI mode 0, 8-bit cmd/param, queue depth 10) → `esp_lcd_new_panel_st7789`
+  (RST 39, `rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB`, 16 bpp) → `reset` → `init` →
+  `set_gap(34,0)` → `invert_color(true)` → `disp_on_off(true)`. The enum binding is guarded by
+  `_Static_assert(CB_LCD_SPI_HOST == SPI2_HOST)`.
+- Colour inversion **on** + element order RGB + `swap_bytes` in the LVGL flush path are **one
+  exact combination** — the diagnostic screen separates the failure axes (red↔blue = element
+  order; washed-out black = inversion; 34-px shift/crop = gap; missing corners = mirroring).
+- Backlight: LEDC 4 kHz (`CB_LCD_BL_PWM_HZ`), 10-bit (duty max 1023, `CB_MATH_BACKLIGHT_MAX`),
+  on-level 1. **Init duty is 0** — no white boot flash (GPIO46 strapping); `cb_lcd` turns it on
+  to `CB_BACKLIGHT_ON_PERCENT` (100) via a one-shot `LV_EVENT_REFR_READY` hook **after the first
+  frame is drawn** (ruling A2 — examples must not switch it on themselves).
+- LVGL 9.5 via `esp_lvgl_port` 2.9.0 with **unmodified** `ESP_LVGL_PORT_INIT_CONFIG()` defaults
+  (A7, verified against the 2.9.0 header): task priority **4**, task stack **7168**,
+  `task_max_sleep_ms 500`, `timer_period_ms 5`. Draw buffers: double, `CB_LCD_H_RES*40` px each,
+  RGB565, in OCT PSRAM, `buff_dma + buff_spiram + swap_bytes` (PSRAM/DMA runtime integrity is a
+  hardware-day item). Examples allocate full-frame canvases (172×320×2 = 110080 B) with
+  `heap_caps_malloc(…, MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)` — never as a static array (A10).
 
 ## IMU (QMI8658, I2C)
 
