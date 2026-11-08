@@ -26,8 +26,9 @@ extern "C" {
 esp_err_t cb_lcd_init(void);
 
 /**
- * @brief Initialise esp_lvgl_port and add the panel display (RGB565 buffers,
- *        PSRAM + DMA, byte swap, CB_LCD_H_RES*40 pixels, double buffered).
+ * @brief Initialise esp_lvgl_port and add the panel display (RGB565 draw
+ *        buffers, internal DMA-capable, byte swap, CB_LCD_H_RES*40 pixels,
+ *        double buffered).
  *        Requires a successful cb_lcd_init() first — otherwise
  *        ESP_ERR_INVALID_STATE (no implicit panel bring-up). Idempotent.
  *

@@ -28,6 +28,7 @@ _Static_assert(CB_LCD_SPI_HOST == SPI2_HOST, "frozen SPI host must be SPI2");
 #define CB_BACKLIGHT_ON_PERCENT 100  /* item-2 ruling 2: turn-on level */
 
 static esp_lcd_panel_handle_t s_panel;
+static esp_lcd_panel_io_handle_t s_io_handle;  /* needed by esp_lvgl_port (flush-ready cb) */
 static lv_display_t          *s_disp;
 static bool                   s_port_inited;  /* lvgl_port_init done (A8) */
 static bool                   s_lvgl_inited;  /* lvgl_port_add_disp done (A8) */
@@ -92,6 +93,7 @@ esp_err_t cb_lcd_init(void)
     esp_lcd_panel_disp_on_off(panel, true);
 
     s_panel = panel;
+    s_io_handle = io;
     ESP_LOGI(TAG, "display: 172x320 ST7789, spi2 @40MHz, gap(34,0)");
     return ESP_OK;
 
@@ -139,9 +141,11 @@ esp_err_t cb_lcd_init_lvgl(void)
     }
 
     const lvgl_port_display_cfg_t disp_cfg = {
-        .io_handle    = NULL,
+        /* esp_lvgl_port 2.9 asserts io_handle != NULL and uses it to register
+         * the flush-ready callback (esp_lvgl_port_disp.c:120,126-130). */
+        .io_handle    = s_io_handle,
         .panel_handle = s_panel,
-        .buffer_size  = CB_LCD_H_RES * 40,
+        .buffer_size  = CB_LCD_H_RES * 40,   /* pixels, not bytes */
         .double_buffer = true,
         .hres         = CB_LCD_H_RES,
         .vres         = CB_LCD_V_RES,
@@ -153,22 +157,25 @@ esp_err_t cb_lcd_init_lvgl(void)
         },
         .color_format = LV_COLOR_FORMAT_RGB565,
         .flags = {
-            .buff_dma         = 1,
-            .buff_spiram      = 1,
-            .swap_bytes       = 1,
+            /* Internal DMA-capable buffers: esp_lvgl_port rejects
+             * buff_dma && buff_spiram on this SoC (SOC_PSRAM_DMA_CAPABLE == 0,
+             * "Alloc DMA capable buffer in SPIRAM is not supported!"). */
+            .buff_dma         = true,
+            .buff_spiram      = false,
+            .swap_bytes       = true,
         },
     };
     lv_display_t *disp = lvgl_port_add_disp(&disp_cfg);
     if (disp == NULL) {
         /* A8: the port stays inited (no second LVGL task on retry). */
-        ESP_LOGW(TAG, "lvgl_port_add_disp: buffers/disp alloc failed");
-        return ESP_ERR_NO_MEM;
+        ESP_LOGE(TAG, "lvgl_port_add_disp failed");
+        return ESP_FAIL;
     }
 
     s_disp = disp;
     s_lvgl_inited = true;
     (void)lv_display_add_event_cb(disp, on_refr_ready, LV_EVENT_REFR_READY, NULL);
-    ESP_LOGI(TAG, "lvgl %d.%d up, %dx%d RGB565 x2 (PSRAM+DMA)",
+    ESP_LOGI(TAG, "lvgl %d.%d up, %dx%d RGB565 x2 (internal DMA)",
              LVGL_VERSION_MAJOR, LVGL_VERSION_MINOR, CB_LCD_H_RES, CB_LCD_V_RES);
     return ESP_OK;
 }
