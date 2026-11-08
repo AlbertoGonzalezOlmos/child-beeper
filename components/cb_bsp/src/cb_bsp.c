@@ -89,15 +89,15 @@ esp_err_t cb_bsp_init(uint32_t parts)
 
     for (size_t i = 0; i < sizeof(k_parts) / sizeof(k_parts[0]); ++i) {
         const cb_part_desc_t *p = &k_parts[i];
+
+        if ((parts & p->flag) == 0) {
+            continue;   /* not requested: skip entirely (fixed order kept) */
+        }
         if (s_inited & p->flag) {
             ESP_LOGI(TAG, "%s: already initialized", p->name);
             continue;
         }
         esp_err_t err;
-
-        if ((parts & p->flag) == 0) {
-            continue;   /* not requested: skip entirely (fixed order kept) */
-        }
 
         if (p->init == NULL) {
             /* Requested but not implemented yet (item 1 skeleton). */

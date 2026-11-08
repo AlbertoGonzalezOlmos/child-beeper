@@ -27,6 +27,16 @@ _Static_assert(CB_LCD_SPI_HOST == SPI2_HOST, "frozen SPI host must be SPI2");
 
 #define CB_BACKLIGHT_ON_PERCENT 100  /* item-2 ruling 2: turn-on level */
 
+/* Log a panel bring-up step failure at ERROR; returns the rc unchanged so the
+ * caller can keep the first error. */
+static esp_err_t panel_step(esp_err_t rc, const char *what)
+{
+    if (rc != ESP_OK) {
+        ESP_LOGE(TAG, "%s: %s", what, esp_err_to_name(rc));
+    }
+    return rc;
+}
+
 static esp_lcd_panel_handle_t s_panel;
 static esp_lcd_panel_io_handle_t s_io_handle;  /* needed by esp_lvgl_port (flush-ready cb) */
 static lv_display_t          *s_disp;
@@ -86,17 +96,35 @@ esp_err_t cb_lcd_init(void)
         goto err_io;
     }
 
-    esp_lcd_panel_reset(panel);
-    esp_lcd_panel_init(panel);
-    esp_lcd_panel_set_gap(panel, CB_LCD_X_GAP, CB_LCD_Y_GAP);
-    esp_lcd_panel_invert_color(panel, true);
-    esp_lcd_panel_disp_on_off(panel, true);
+    err = panel_step(esp_lcd_panel_reset(panel), "esp_lcd_panel_reset");
+    if (err == ESP_OK) {
+        err = panel_step(esp_lcd_panel_init(panel), "esp_lcd_panel_init");
+    }
+    if (err == ESP_OK) {
+        err = panel_step(esp_lcd_panel_set_gap(panel, CB_LCD_X_GAP, CB_LCD_Y_GAP),
+                         "esp_lcd_panel_set_gap");
+    }
+    if (err == ESP_OK) {
+        err = panel_step(esp_lcd_panel_invert_color(panel, true),
+                         "esp_lcd_panel_invert_color");
+    }
+    if (err == ESP_OK) {
+        err = panel_step(esp_lcd_panel_disp_on_off(panel, true),
+                         "esp_lcd_panel_disp_on_off");
+    }
+    if (err != ESP_OK) {
+        goto err_panel;   /* first error; earlier steps' state goes away with the panel */
+    }
 
     s_panel = panel;
     s_io_handle = io;
-    ESP_LOGI(TAG, "display: 172x320 ST7789, spi2 @40MHz, gap(34,0)");
+    ESP_LOGI(TAG, "display: %dx%d ST7789, spi2 @%dMHz, gap(%d,%d)",
+             CB_LCD_H_RES, CB_LCD_V_RES, (int)(CB_LCD_PIXEL_CLK_HZ / 1000000),
+             CB_LCD_X_GAP, CB_LCD_Y_GAP);
     return ESP_OK;
 
+err_panel:
+    (void)esp_lcd_panel_del(panel);
 err_io:
     (void)esp_lcd_panel_io_del(io);
 err_bus:
@@ -113,8 +141,11 @@ static void on_refr_ready(lv_event_t *ev)
         return;
     }
     s_bl_hook_fired = true;
-    cb_backlight_set(CB_BACKLIGHT_ON_PERCENT);
-    ESP_LOGI(TAG, "first frame done: backlight %d%%", CB_BACKLIGHT_ON_PERCENT);
+    if (cb_backlight_get() == 0) {
+        /* Do not override an explicit app setting (review fix 5). */
+        cb_backlight_set(CB_BACKLIGHT_ON_PERCENT);
+        ESP_LOGI(TAG, "first frame done: backlight %d%%", CB_BACKLIGHT_ON_PERCENT);
+    }
 }
 
 esp_err_t cb_lcd_init_lvgl(void)
@@ -165,16 +196,28 @@ esp_err_t cb_lcd_init_lvgl(void)
             .swap_bytes       = true,
         },
     };
+    /* P0 fix: hold the LVGL lock across add_disp AND the REFR_READY
+     * registration. The lvgl_mux is a recursive mutex (esp_lvgl_port.c:77), so
+     * add_disp's internal lock/unlock nests safely; meanwhile the LVGL task
+     * runs lv_timer_handler under the same mutex, so no refresh pass can start
+     * or finish in between — the one-shot hook cannot miss the first frame
+     * (REFR_READY only fires at the end of an actual pass, lv_refr.c:445). */
+    if (!lvgl_port_lock(0)) {
+        ESP_LOGE(TAG, "lvgl_port_lock failed");
+        return ESP_FAIL;
+    }
     lv_display_t *disp = lvgl_port_add_disp(&disp_cfg);
     if (disp == NULL) {
+        lvgl_port_unlock();
         /* A8: the port stays inited (no second LVGL task on retry). */
         ESP_LOGE(TAG, "lvgl_port_add_disp failed");
         return ESP_FAIL;
     }
+    (void)lv_display_add_event_cb(disp, on_refr_ready, LV_EVENT_REFR_READY, NULL);
+    lvgl_port_unlock();
 
     s_disp = disp;
     s_lvgl_inited = true;
-    (void)lv_display_add_event_cb(disp, on_refr_ready, LV_EVENT_REFR_READY, NULL);
     ESP_LOGI(TAG, "lvgl %d.%d up, %dx%d RGB565 x2 (internal DMA)",
              LVGL_VERSION_MAJOR, LVGL_VERSION_MINOR, CB_LCD_H_RES, CB_LCD_V_RES);
     return ESP_OK;
