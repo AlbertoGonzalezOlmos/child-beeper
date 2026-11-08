@@ -2,10 +2,10 @@
 
 ## Canonical commands
 
-- ESP-IDF env: `. ~/.espressif/tools/activate_idf_v6.1.sh` (IDF v6.1; never hardcode `/home/…`
-  paths in tracked files).
-- `./cb doctor` — toolchain check · `./cb verify` — the no-board gate (host tests + builds +
-  audits + no-port guards).
+- ESP-IDF env: `. ~/.espressif/tools/activate_idf_v6.1.sh` (IDF v6.1; never hardcode absolute
+  home paths in tracked files).
+- `./cb doctor` — toolchain check · `./cb verify` — the build gate (host tests + builds +
+  audits; runs with or without a board attached — flashing is the only part that needs one).
 - `./cb build app` — root app · `./cb build <example-dir-name>` (e.g. `01_lcd_hello`) ·
   `./cb test` — host unit tests (`make -C tests/host test`).
 - Raw build (IDE-friendly), inside any project dir: `idf.py -B <dir> build` — the target comes

@@ -22,8 +22,9 @@ support package (`components/cb_bsp`) plus one example per peripheral, with an A
 See [docs/index.md](docs/index.md) for the full documentation map (hardware, ESP-IDF, Arduino,
 flashing, API, verification, troubleshooting) and [AGENTS.md](AGENTS.md) for working rules.
 
-Everything here is **build-verified only** until [docs/verification.md](docs/verification.md)
-records a hardware session — no board has been attached yet.
+What is **build-verified** vs **hardware-verified** is tracked per peripheral in
+[docs/verification.md](docs/verification.md) — check it before trusting a feature; the hardware-day
+checklist there records what has actually been observed on the board.
 
 ## Layout
 

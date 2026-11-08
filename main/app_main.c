@@ -9,6 +9,13 @@
  * return value. cb_bsp_init() never aborts the boot, so this app runs on a
  * half-populated BSP and comes alive as items 2-5 land, without changes here.
  *
+ * Boot summary: the USB host only re-attaches the serial console ~1 s after
+ * reset (measured on this board), so the early boot logs — banner, the per-part
+ * warnings, the init result — are usually lost. After the FIRST heartbeat,
+ * once the console is observable, a compact one-shot summary is printed:
+ * reset reason, cb_bsp version, the stored cb_bsp_init(CB_PART_ALL) result and
+ * the IDF version.
+ *
  * Build-verified only until a board is attached (see docs/verification.md).
  */
 #include <stdio.h>
@@ -19,10 +26,34 @@
 #include "esp_err.h"
 #include "esp_idf_version.h"
 #include "esp_log.h"
+#include "esp_system.h"
 
 #include "cb_bsp.h"
 
 static const char *TAG = "hello_beeper";
+
+/* Compact name for the reset reason (esp_reset_reason has no to_name helper). */
+static const char *reset_reason_name(esp_reset_reason_t reason)
+{
+    switch (reason) {
+    case ESP_RST_POWERON:    return "POWERON";
+    case ESP_RST_EXT:        return "EXT";
+    case ESP_RST_SW:         return "SW";
+    case ESP_RST_PANIC:      return "PANIC";
+    case ESP_RST_INT_WDT:    return "INT_WDT";
+    case ESP_RST_TASK_WDT:   return "TASK_WDT";
+    case ESP_RST_WDT:        return "WDT";
+    case ESP_RST_DEEPSLEEP:  return "DEEPSLEEP";
+    case ESP_RST_BROWNOUT:   return "BROWNOUT";
+    case ESP_RST_SDIO:       return "SDIO";
+    case ESP_RST_USB:        return "USB";
+    case ESP_RST_JTAG:       return "JTAG";
+    case ESP_RST_EFUSE:      return "EFUSE";
+    case ESP_RST_PWR_GLITCH: return "PWR_GLITCH";
+    case ESP_RST_CPU_LOCKUP: return "CPU_LOCKUP";
+    default:                 return "UNKNOWN";
+    }
+}
 
 void app_main(void)
 {
@@ -43,6 +74,17 @@ void app_main(void)
 
     for (int i = 1;; ++i) {
         ESP_LOGI(TAG, "alive #%d", i);
+        if (i == 1) {
+            /* One-shot, after the first heartbeat: the console is reliably
+             * attached by now, so the boot state is observable even though
+             * the early lines above were lost to the ~1 s re-attach delay. */
+            ESP_LOGI(TAG,
+                     "boot summary: reset=%s cb_bsp=%s init(CB_PART_ALL)=%s idf=%s",
+                     reset_reason_name(esp_reset_reason()),
+                     cb_bsp_version(),
+                     esp_err_to_name(err),
+                     esp_get_idf_version());
+        }
         vTaskDelay(pdMS_TO_TICKS(2000));
     }
 }
