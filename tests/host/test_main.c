@@ -9,6 +9,7 @@
 #include "cb_math.h"
 #include "cb_button_fsm.h"
 #include "cb_qmi8658_regs.h"
+#include "cb_pattern.h"
 
 static int tests_run;
 static int tests_failed;
@@ -474,6 +475,210 @@ static void test_fsm_time_wraparound(void)
     expect_update(&fsm, false, 2000, CB_BTN_EV_NONE);
 }
 
+#define PATTERN_MAX_PIXELS (CB_LCD_H_RES * CB_LCD_V_RES)
+#define PATTERN_GUARD 0xA55A
+
+static uint16_t pattern_storage[PATTERN_MAX_PIXELS + 2];
+static uint16_t *pattern_data = pattern_storage + 1;
+
+static void pattern_reset(void)
+{
+    size_t i;
+    for (i = 0; i < PATTERN_MAX_PIXELS + 2; ++i) {
+        pattern_storage[i] = PATTERN_GUARD;
+    }
+}
+
+static void pattern_check_guards(void)
+{
+    CHECK_INT(PATTERN_GUARD, pattern_storage[0]);
+    CHECK_INT(PATTERN_GUARD, pattern_storage[PATTERN_MAX_PIXELS + 1]);
+}
+
+static uint16_t expected_grey(int x, int width)
+{
+    const uint8_t v = (uint8_t)((int64_t)x * 255 / (width - 1));
+    return (uint16_t)(((uint16_t)(v >> 3) << 11) |
+                      ((uint16_t)(v >> 2) << 5) |
+                      (uint16_t)(v >> 3));
+}
+
+static void test_pattern_palette(void)
+{
+    static const uint16_t expected[] = {
+        0xFFFF, 0xFFE0, 0x07FF, 0x07E0,
+        0xF81F, 0xF800, 0x001F, 0x0000
+    };
+    size_t i;
+    for (i = 0; i < sizeof(expected) / sizeof(expected[0]); ++i) {
+        CHECK_INT(expected[i], cb_pattern_bar_color((int)i));
+    }
+    CHECK_INT(0x0000, cb_pattern_bar_color(-1));
+    CHECK_INT(0x0000, cb_pattern_bar_color(8));
+    CHECK_INT(0x0000, cb_pattern_bar_color(INT_MAX));
+}
+
+static void test_pattern_solid_and_invalid(void)
+{
+    const int width = 19;
+    const int height = 17;
+    int y;
+    int x;
+
+    pattern_reset();
+    cb_pattern_fill_solid(pattern_data, width, height, 0x1234);
+    for (y = 0; y < height; ++y) {
+        for (x = 0; x < width; ++x) {
+            CHECK_INT(0x1234, pattern_data[y * width + x]);
+        }
+    }
+    pattern_check_guards();
+
+    pattern_reset();
+    cb_pattern_fill_solid(pattern_data, 16, 17, 0x1234);
+    cb_pattern_fill_solid(pattern_data, 17, 16, 0x1234);
+    cb_pattern_fill_diagnostic(pattern_data, 16, 16);
+    cb_pattern_fill_solid(0, 172, 320, 0x1234);
+    cb_pattern_fill_diagnostic(0, 172, 320);
+    for (size_t i = 0; i < PATTERN_MAX_PIXELS + 2; ++i) {
+        CHECK_INT(PATTERN_GUARD, pattern_storage[i]);
+    }
+}
+
+static void test_pattern_corner_markers(void)
+{
+    int dy;
+    int dx;
+
+    pattern_reset();
+    cb_pattern_fill_diagnostic(pattern_data, CB_LCD_H_RES, CB_LCD_V_RES);
+    for (dy = 0; dy < 2; ++dy) {
+        for (dx = 0; dx < 2; ++dx) {
+            CHECK_INT(0xF800, pattern_data[dy * CB_LCD_H_RES + dx]);
+            CHECK_INT(0xFFE0,
+                      pattern_data[dy * CB_LCD_H_RES + (CB_LCD_H_RES - 2 + dx)]);
+            CHECK_INT(0x07FF,
+                      pattern_data[(CB_LCD_V_RES - 2 + dy) * CB_LCD_H_RES + dx]);
+            CHECK_INT(0xF81F,
+                      pattern_data[(CB_LCD_V_RES - 2 + dy) * CB_LCD_H_RES +
+                                   (CB_LCD_H_RES - 2 + dx)]);
+        }
+    }
+
+    CHECK_INT(0xFFFF, pattern_data[2]);
+    CHECK_INT(0x0000, pattern_data[CB_LCD_H_RES - 3]);
+    CHECK_INT(0x0000, pattern_data[300 * CB_LCD_H_RES]);
+    CHECK_INT(0xFFFF, pattern_data[300 * CB_LCD_H_RES + CB_LCD_H_RES - 1]);
+    CHECK_INT(expected_grey(2, CB_LCD_H_RES),
+              pattern_data[319 * CB_LCD_H_RES + 2]);
+    CHECK_INT(expected_grey(169, CB_LCD_H_RES),
+              pattern_data[319 * CB_LCD_H_RES + 169]);
+    pattern_check_guards();
+}
+
+static void test_pattern_bar_boundaries(void)
+{
+    static const int starts[] = {0, 22, 43, 65, 86, 108, 129, 151};
+    static const int ends[] = {21, 42, 64, 85, 107, 128, 150, 171};
+    static const int odd_widths[] = {17, 19, 23};
+    size_t i;
+
+    pattern_reset();
+    cb_pattern_fill_diagnostic(pattern_data, CB_LCD_H_RES, CB_LCD_V_RES);
+    for (i = 0; i < sizeof(starts) / sizeof(starts[0]); ++i) {
+        CHECK_INT(cb_pattern_bar_color((int)i),
+                  pattern_data[2 * CB_LCD_H_RES + starts[i]]);
+        CHECK_INT(cb_pattern_bar_color((int)i),
+                  pattern_data[2 * CB_LCD_H_RES + ends[i]]);
+        if (i > 0) {
+            CHECK_INT(cb_pattern_bar_color((int)i - 1),
+                      pattern_data[2 * CB_LCD_H_RES + starts[i] - 1]);
+        }
+    }
+    for (int x = 0; x < CB_LCD_H_RES; ++x) {
+        const int bar = (int)((int64_t)x * 8 / CB_LCD_H_RES);
+        CHECK_INT(cb_pattern_bar_color(bar),
+                  pattern_data[2 * CB_LCD_H_RES + x]);
+    }
+
+    for (i = 0; i < sizeof(odd_widths) / sizeof(odd_widths[0]); ++i) {
+        const int width = odd_widths[i];
+        cb_pattern_fill_diagnostic(pattern_data, width, 33);
+        for (int x = 0; x < width; ++x) {
+            const int bar = (int)((int64_t)x * 8 / width);
+            CHECK_INT(cb_pattern_bar_color(bar), pattern_data[2 * width + x]);
+        }
+    }
+    pattern_check_guards();
+}
+
+static void test_pattern_ramp(void)
+{
+    pattern_reset();
+    cb_pattern_fill_diagnostic(pattern_data, CB_LCD_H_RES, CB_LCD_V_RES);
+
+    CHECK_INT(cb_pattern_bar_color(0), pattern_data[299 * CB_LCD_H_RES + 2]);
+    CHECK_INT(0x0000, pattern_data[300 * CB_LCD_H_RES]);
+    CHECK_INT(0xFFFF, pattern_data[300 * CB_LCD_H_RES + CB_LCD_H_RES - 1]);
+
+    for (int y = 300; y < 318; ++y) {
+        for (int x = 0; x < CB_LCD_H_RES; ++x) {
+            CHECK_INT(expected_grey(x, CB_LCD_H_RES),
+                      pattern_data[y * CB_LCD_H_RES + x]);
+        }
+    }
+    for (int y = 318; y < 320; ++y) {
+        for (int x = 2; x < CB_LCD_H_RES - 2; ++x) {
+            CHECK_INT(expected_grey(x, CB_LCD_H_RES),
+                      pattern_data[y * CB_LCD_H_RES + x]);
+        }
+    }
+    pattern_check_guards();
+}
+
+static void test_pattern_stride_and_endian(void)
+{
+    const int width = 19;
+    const int height = 17;
+    const uint8_t *bytes = (const uint8_t *)pattern_data;
+
+    pattern_reset();
+    cb_pattern_fill_diagnostic(pattern_data, width, height);
+    CHECK_INT(0xF800, pattern_data[0]);
+    CHECK_INT(0xFFE0, pattern_data[width - 1]);
+    CHECK_INT(0x07FF, pattern_data[(height - 1) * width]);
+    CHECK_INT(0xF81F, pattern_data[height * width - 1]);
+    CHECK_INT(0x00, bytes[0]);
+    CHECK_INT(0xF8, bytes[1]);
+    CHECK_INT(cb_pattern_bar_color((int)((int64_t)2 * 8 / width)),
+              pattern_data[2 * width + 2]);
+    pattern_check_guards();
+}
+
+static void test_pattern_odd_geometry(void)
+{
+    pattern_reset();
+    cb_pattern_fill_diagnostic(pattern_data, 17, 17);
+    CHECK_INT(cb_pattern_bar_color((int)((int64_t)2 * 8 / 17)),
+              pattern_data[15 * 17 + 2]);
+    CHECK_INT(expected_grey(2, 17), pattern_data[16 * 17 + 2]);
+    CHECK_INT(0xF800, pattern_data[0]);
+    CHECK_INT(0xFFE0, pattern_data[16]);
+    CHECK_INT(0x07FF, pattern_data[16 * 17]);
+    CHECK_INT(0xF81F, pattern_data[16 * 17 + 16]);
+    pattern_check_guards();
+
+    pattern_reset();
+    cb_pattern_fill_diagnostic(pattern_data, 19, 33);
+    CHECK_INT(cb_pattern_bar_color((int)((int64_t)2 * 8 / 19)),
+              pattern_data[30 * 19 + 2]);
+    CHECK_INT(expected_grey(2, 19), pattern_data[31 * 19 + 2]);
+    CHECK_INT(expected_grey(16, 19), pattern_data[32 * 19 + 16]);
+    CHECK_INT(0x07FF, pattern_data[32 * 19]);
+    CHECK_INT(0xF81F, pattern_data[32 * 19 + 18]);
+    pattern_check_guards();
+}
+
 typedef struct {
     cb_btn_event_t events[64];
     size_t count;
@@ -613,6 +818,13 @@ int main(void)
     run_test(test_fsm_no_duplicate_edges, "button does not duplicate stable edges");
     run_test(test_fsm_time_wraparound, "button injected-time wraparound");
     run_test(test_fsm_fully_polled_traces, "button fully polled multi-gesture traces");
+    run_test(test_pattern_palette, "pattern palette and out-of-range index");
+    run_test(test_pattern_solid_and_invalid, "pattern solid fill and invalid input");
+    run_test(test_pattern_corner_markers, "pattern exact corner markers");
+    run_test(test_pattern_bar_boundaries, "pattern bar boundaries and remainders");
+    run_test(test_pattern_ramp, "pattern grey ramp endpoints and rows");
+    run_test(test_pattern_stride_and_endian, "pattern packed stride, guards and endian");
+    run_test(test_pattern_odd_geometry, "pattern odd-size geometry");
 
     printf("1..%d\n", tests_run);
     printf("# failed %d\n", tests_failed);
