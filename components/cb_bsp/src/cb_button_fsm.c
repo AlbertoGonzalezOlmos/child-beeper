@@ -2,7 +2,10 @@
 
 void cb_btn_fsm_init(cb_btn_fsm_t *fsm)
 {
-    *fsm = (cb_btn_fsm_t){0};
+    cb_btn_fsm_t zero = {
+        false, false, false, false, false, 0u, 0u, 0u
+    };
+    *fsm = zero;
 }
 
 cb_btn_event_t cb_btn_fsm_update(cb_btn_fsm_t *fsm, bool level_pressed, uint32_t now_ms)
@@ -22,7 +25,8 @@ cb_btn_event_t cb_btn_fsm_update(cb_btn_fsm_t *fsm, bool level_pressed, uint32_t
     if (fsm->stable_pressed && !was_stable) {
         fsm->press_start_ms = now_ms;
         fsm->long_fired = false;
-        /* Keep click_pending so a second release can satisfy R4's double click. */
+        /* R4 erratum: keep click_pending across the second press. Clearing it
+         * here makes the second-release double-click branch unreachable. */
         return CB_BTN_EV_PRESS;
     }
 

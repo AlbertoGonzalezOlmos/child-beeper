@@ -22,6 +22,12 @@ TEST_SOURCES := \
 	$(REPO_ROOT)/components/cb_bsp/src/cb_math.c \
 	$(REPO_ROOT)/components/cb_bsp/src/cb_button_fsm.c
 
+TEST_HEADERS := \
+	$(REPO_ROOT)/components/cb_bsp/include/cb_pins.h \
+	$(REPO_ROOT)/components/cb_bsp/include/cb_math.h \
+	$(REPO_ROOT)/components/cb_bsp/include/cb_button_fsm.h \
+	$(REPO_ROOT)/components/cb_bsp/include/cb_qmi8658_regs.h
+
 .PHONY: all run_tests test clean
 .DELETE_ON_ERROR:
 
@@ -29,7 +35,7 @@ all: $(RUN_TESTS)
 
 run_tests: $(RUN_TESTS)
 
-$(RUN_TESTS): $(TEST_SOURCES) | $(HOST_BUILD_DIR)
+$(RUN_TESTS): $(TEST_SOURCES) $(TEST_HEADERS) | $(HOST_BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(TEST_SOURCES) $(LDFLAGS) $(LDLIBS) -o $@
 
 $(HOST_BUILD_DIR):

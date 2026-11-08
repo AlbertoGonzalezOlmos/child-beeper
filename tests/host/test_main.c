@@ -474,6 +474,117 @@ static void test_fsm_time_wraparound(void)
     expect_update(&fsm, false, 2000, CB_BTN_EV_NONE);
 }
 
+typedef struct {
+    cb_btn_event_t events[64];
+    size_t count;
+} cb_trace_t;
+
+static void trace_update(cb_btn_fsm_t *fsm, bool pressed, uint32_t now_ms,
+                         cb_trace_t *trace)
+{
+    cb_btn_event_t event = cb_btn_fsm_update(fsm, pressed, now_ms);
+    if (event == CB_BTN_EV_NONE) {
+        return;
+    }
+    if (trace->count >= sizeof(trace->events) / sizeof(trace->events[0])) {
+        fail_at(__LINE__, "event trace overflow");
+        return;
+    }
+    trace->events[trace->count++] = event;
+}
+
+static void polled_to(cb_btn_fsm_t *fsm, uint32_t *now_ms, uint32_t stop_ms,
+                      bool pressed, cb_trace_t *trace)
+{
+    while (*now_ms <= stop_ms) {
+        trace_update(fsm, pressed, *now_ms, trace);
+        *now_ms += 5;
+    }
+}
+
+static void expect_trace(const cb_trace_t *trace, const cb_btn_event_t *expected,
+                         size_t expected_count)
+{
+    size_t i;
+    CHECK_INT(expected_count, trace->count);
+    for (i = 0; i < expected_count && i < trace->count; ++i) {
+        CHECK_INT(expected[i], trace->events[i]);
+    }
+}
+
+static void test_fsm_fully_polled_traces(void)
+{
+    static const cb_btn_event_t single[] = {
+        CB_BTN_EV_PRESS, CB_BTN_EV_RELEASE, CB_BTN_EV_CLICK
+    };
+    static const cb_btn_event_t double_click[] = {
+        CB_BTN_EV_PRESS, CB_BTN_EV_RELEASE, CB_BTN_EV_PRESS,
+        CB_BTN_EV_RELEASE, CB_BTN_EV_DOUBLE_CLICK
+    };
+    static const cb_btn_event_t long_press[] = {
+        CB_BTN_EV_PRESS, CB_BTN_EV_LONG_PRESS, CB_BTN_EV_RELEASE
+    };
+    static const cb_btn_event_t long_after_pending[] = {
+        CB_BTN_EV_PRESS, CB_BTN_EV_RELEASE, CB_BTN_EV_PRESS,
+        CB_BTN_EV_CLICK, CB_BTN_EV_LONG_PRESS, CB_BTN_EV_RELEASE
+    };
+    static const cb_btn_event_t slow_second[] = {
+        CB_BTN_EV_PRESS, CB_BTN_EV_RELEASE, CB_BTN_EV_PRESS,
+        CB_BTN_EV_CLICK, CB_BTN_EV_RELEASE, CB_BTN_EV_CLICK
+    };
+    cb_btn_fsm_t fsm;
+    cb_trace_t trace;
+    uint32_t now;
+
+    /* Every scenario injects raw input every 5 ms, including while a second
+     * press is held. This covers decisions hidden by large test-time jumps. */
+    memset(&trace, 0, sizeof(trace));
+    cb_btn_fsm_init(&fsm);
+    now = 0;
+    polled_to(&fsm, &now, 95, true, &trace);
+    polled_to(&fsm, &now, 500, false, &trace);
+    expect_trace(&trace, single, sizeof(single) / sizeof(single[0]));
+
+    memset(&trace, 0, sizeof(trace));
+    cb_btn_fsm_init(&fsm);
+    now = 0;
+    polled_to(&fsm, &now, 95, true, &trace);
+    polled_to(&fsm, &now, 145, false, &trace);
+    polled_to(&fsm, &now, 195, true, &trace);
+    polled_to(&fsm, &now, 300, false, &trace);
+    expect_trace(&trace, double_click, sizeof(double_click) / sizeof(double_click[0]));
+
+    memset(&trace, 0, sizeof(trace));
+    cb_btn_fsm_init(&fsm);
+    now = 0;
+    polled_to(&fsm, &now, 995, true, &trace);
+    polled_to(&fsm, &now, 1200, false, &trace);
+    expect_trace(&trace, long_press, sizeof(long_press) / sizeof(long_press[0]));
+
+    /* The first deferred CLICK matures at 470 ms during the second hold;
+     * LONG_PRESS at 970 ms suppresses any later click from that hold. */
+    memset(&trace, 0, sizeof(trace));
+    cb_btn_fsm_init(&fsm);
+    now = 0;
+    polled_to(&fsm, &now, 95, true, &trace);
+    polled_to(&fsm, &now, 145, false, &trace);
+    polled_to(&fsm, &now, 995, true, &trace);
+    polled_to(&fsm, &now, 1300, false, &trace);
+    expect_trace(&trace, long_after_pending,
+                 sizeof(long_after_pending) / sizeof(long_after_pending[0]));
+
+    /* Second press starts at 300 ms (inside the gap), releases at 600 ms
+     * (outside it): two independent CLICKs, the first during the hold. */
+    memset(&trace, 0, sizeof(trace));
+    cb_btn_fsm_init(&fsm);
+    now = 0;
+    polled_to(&fsm, &now, 95, true, &trace);
+    polled_to(&fsm, &now, 295, false, &trace);
+    polled_to(&fsm, &now, 595, true, &trace);
+    polled_to(&fsm, &now, 1100, false, &trace);
+    expect_trace(&trace, slow_second, sizeof(slow_second) / sizeof(slow_second[0]));
+}
+
 int main(void)
 {
     run_test(test_pins_lcd, "pins LCD and RGB contract");
@@ -501,6 +612,7 @@ int main(void)
     run_test(test_fsm_long_cancels_pending_click, "button long press cancels pending click");
     run_test(test_fsm_no_duplicate_edges, "button does not duplicate stable edges");
     run_test(test_fsm_time_wraparound, "button injected-time wraparound");
+    run_test(test_fsm_fully_polled_traces, "button fully polled multi-gesture traces");
 
     printf("1..%d\n", tests_run);
     printf("# failed %d\n", tests_failed);
