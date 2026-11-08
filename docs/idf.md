@@ -135,6 +135,7 @@ CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y / _FLASHMODE_QIO=y   # 16 MB quad-io flash
 CONFIG_PARTITION_TABLE_CUSTOM=y            # CSV named per project (see above)
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y       # logs on the Type-C port (native USB-Serial/JTAG)
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192       # headroom for LVGL/app_main work
+CONFIG_FREERTOS_HZ=1000                    # 1 ms tick — item 3's button poller needs finer granularity than the 100 Hz default
 ```
 
 `./cb verify` step `sdkconfig-assert` mechanically re-checks these keys in every built target.
