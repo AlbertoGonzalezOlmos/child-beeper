@@ -22,6 +22,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#include "cb_backlight.h"
+#include "cb_lcd.h"
 #include "esp_log.h"
 
 static const char *TAG = "cb_bsp";
@@ -37,16 +39,21 @@ typedef struct {
 
 /* Frozen init order — never reorder. */
 static const cb_part_desc_t k_parts[] = {
-    { "BACKLIGHT", CB_PART_BACKLIGHT, false, NULL },
+    { "BACKLIGHT", CB_PART_BACKLIGHT, false, cb_backlight_init },
     { "RGB",       CB_PART_RGB,       false, NULL },
     { "I2C",       CB_PART_I2C,       false, NULL },
     { "IMU",       CB_PART_IMU,       false, NULL },
     { "BUTTON",    CB_PART_BUTTON,    false, NULL },
     { "BATTERY",   CB_PART_BATTERY,   false, NULL },
-    { "LCD",       CB_PART_LCD,       true,  NULL },
-    { "LVGL",      CB_PART_LVGL,      true,  NULL },
+    { "LCD",       CB_PART_LCD,       true,  cb_lcd_init },
+    { "LVGL",      CB_PART_LVGL,      true,  cb_lcd_init_lvgl },
     { "SD",        CB_PART_SD,        false, NULL },
 };
+
+/* Item-2 idempotency ruling: parts that returned ESP_OK are marked here and
+ * skipped (logged "already initialized") on later cb_bsp_init() calls. A part
+ * that failed is NOT marked and is retried on the next call. */
+static uint32_t s_inited;
 
 /* The table must cover every CB_PART_* bit exactly, in enum order. */
 _Static_assert(CB_PART_ALL == 0x1FF, "frozen part mask");
@@ -82,6 +89,10 @@ esp_err_t cb_bsp_init(uint32_t parts)
 
     for (size_t i = 0; i < sizeof(k_parts) / sizeof(k_parts[0]); ++i) {
         const cb_part_desc_t *p = &k_parts[i];
+        if (s_inited & p->flag) {
+            ESP_LOGI(TAG, "%s: already initialized", p->name);
+            continue;
+        }
         esp_err_t err;
 
         if ((parts & p->flag) == 0) {
@@ -99,6 +110,7 @@ esp_err_t cb_bsp_init(uint32_t parts)
 
         err = p->init();
         if (err == ESP_OK) {
+            s_inited |= p->flag;  /* mark only on success (retry on failure) */
             continue;
         }
         if (p->strict) {
