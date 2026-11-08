@@ -181,7 +181,11 @@ def verify(ctx: Ctx, runner: Runner, *, fast: bool = False) -> tuple[int, list[S
 
     # 4. static audit ---------------------------------------------------------
     def _audit() -> tuple[str, str, dict]:
-        findings = staticchecks.scan_forbidden(ctx) + staticchecks.scan_abs_paths(ctx)
+        findings = (
+            staticchecks.scan_forbidden(ctx)
+            + staticchecks.scan_abs_paths(ctx)
+            + staticchecks.scan_lcd_invariants(ctx)
+        )
         if findings:
             sample = "; ".join(f.render() for f in findings[:5])
             more = f" (+{len(findings) - 5} more)" if len(findings) > 5 else ""

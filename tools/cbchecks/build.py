@@ -215,6 +215,9 @@ STORAGE_LINE = re.compile(
 )
 
 
+SIZES_PLACEHOLDER = {"bin": None, "bin_bytes": None, "source": "not-built", "fallback": True}
+
+
 @dataclass
 class BuildOutcome:
     ok: bool
@@ -283,9 +286,12 @@ def build_idf(ctx: Ctx, runner: Runner, target: Target, *, timeout: float = 3600
     else:
         reason = extract_error((result.out or "") + (result.err or "")) or result.tail(4) or "(no output)"
         detail = f"build failed: {reason} (log {log})"
-    extra: dict = {"build_dir": str(bdir), "log": str(log)}
-    if binary is not None:
-        extra["artifacts"] = artifacts(bdir)
+    extra: dict = {
+        "build_dir": str(bdir),
+        "log": str(log),
+        "artifacts": artifacts(bdir),          # always a list (empty when nothing was produced)
+        "sizes": dict(SIZES_PLACEHOLDER),      # replaced by idf.py size / .bin measurement on success
+    }
     return BuildOutcome(ok, target, bdir, log, detail, extra)
 
 
@@ -311,7 +317,19 @@ def build_arduino(ctx: Ctx, runner: Runner, target: Target) -> BuildOutcome:
     else:
         reason = extract_error((result.out or "") + (result.err or "")) or result.tail(4)
         detail = f"compile failed: {reason} (log {log})"
-    return BuildOutcome(ok, target, bdir, log, detail, {"build_dir": str(bdir), "log": str(log)})
+    return BuildOutcome(
+        ok,
+        target,
+        bdir,
+        log,
+        detail,
+        {
+            "build_dir": str(bdir),
+            "log": str(log),
+            "artifacts": artifacts(bdir),
+            "sizes": dict(SIZES_PLACEHOLDER),
+        },
+    )
 
 
 def build_target(ctx: Ctx, runner: Runner, target: Target) -> BuildOutcome:

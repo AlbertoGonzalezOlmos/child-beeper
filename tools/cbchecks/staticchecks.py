@@ -60,6 +60,16 @@ RULES: tuple[tuple[str, str], ...] = (
 )
 
 ESP_ERROR_CHECK_RULE = "ESP_ERROR_CHECK( in cb_bsp (use error returns, or '// cbcheck:allow')"
+
+# Hardware-proven invariants for the display bring-up (item-2). Both were found by flashing:
+#   * esp_lvgl_port asserts `disp_cfg->io_handle != NULL` (esp_lvgl_port_disp.c:120) -> panic loop,
+#   * `buff_dma && buff_spiram` is rejected with ESP_ERR_NOT_SUPPORTED on this SoC.
+# They are single-file, source-level facts the sdkconfig assertions cannot see.
+LCD_INVARIANTS_FILE = "components/cb_bsp/src/cb_lcd.c"
+LCD_IO_HANDLE_RULE = "cb_lcd.c display config must set .io_handle to a non-NULL handle (esp_lvgl_port asserts)"
+LCD_BUFF_SPIRAM_RULE = "cb_lcd.c must not set .buff_spiram = true (rejected on this SoC: no PSRAM DMA)"
+LCD_IO_HANDLE_ASSIGNED = re.compile(r"\.io_handle\s*=\s*(?!NULL\b|0\b|nullptr\b)[A-Za-z_(]")
+LCD_BUFF_SPIRAM_TRUE = re.compile(r"\.buff_spiram\s*=\s*(?:true|1)\b")
 BSP_ESP_CHECK_SCOPE = "components/cb_bsp"
 
 # A real absolute home path needs a user segment; prose that merely warns against hardcoding
@@ -142,6 +152,30 @@ def scan_forbidden(ctx: Ctx) -> list[Finding]:
     return findings
 
 
+def scan_lcd_invariants(ctx: Ctx) -> list[Finding]:
+    """Item-2 hardware-proven invariants inside cb_lcd.c (see LCD_* constants)."""
+    path = ctx.path(LCD_INVARIANTS_FILE)
+    if not path.is_file():
+        return []  # other items may restructure; absence is handled by the build steps
+    rel = LCD_INVARIANTS_FILE
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    findings: list[Finding] = []
+    io_assigned = False
+    for number, line in enumerate(lines, start=1):
+        if ALLOW_LINE_MARKER in line:
+            continue
+        if LCD_IO_HANDLE_ASSIGNED.search(line):
+            io_assigned = True
+        if LCD_BUFF_SPIRAM_TRUE.search(line):
+            findings.append(Finding(rel, number, LCD_BUFF_SPIRAM_RULE, line))
+    if not io_assigned:
+        findings.append(Finding(rel, 0, LCD_IO_HANDLE_RULE, "<no '.io_handle = <handle>' assignment found>"))
+    return findings
+
+
 def scan_abs_paths(ctx: Ctx) -> list[Finding]:
     findings: list[Finding] = []
     for path in _walk_files(ctx.root, (".",), TEXT_SUFFIXES, CMAKE_NAMES):
@@ -180,7 +214,7 @@ def pin_drift(ctx: Ctx) -> tuple[str, str]:
 
 
 def audit_static(ctx: Ctx) -> tuple[str, str]:
-    findings = scan_forbidden(ctx) + scan_abs_paths(ctx)
+    findings = scan_forbidden(ctx) + scan_abs_paths(ctx) + scan_lcd_invariants(ctx)
     if findings:
         first = "; ".join(f.render() for f in findings[:5])
         more = f" (+{len(findings) - 5} more)" if len(findings) > 5 else ""

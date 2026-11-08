@@ -132,6 +132,33 @@ class TestVerifyHappyPath(TempRepoTest):
         self.assertEqual(ids[-1], "report")
         self.assertIn("sizes", payload["steps"][ids.index("build:app")]["extra"])
 
+    def test_build_steps_report_sizes_and_artifacts(self) -> None:
+        code, _, ctx = _run_verify(self.root)
+        self.assertEqual(code, 0)
+        payload = json.loads(report.report_paths(ctx)[1].read_text(encoding="utf-8"))
+        builds = [s for s in payload["steps"] if s["id"].startswith("build:")]
+        self.assertTrue(builds)
+        for step in builds:
+            extra = step["extra"]
+            self.assertIn("sizes", extra, step["id"])
+            self.assertIsInstance(extra["sizes"], dict, step["id"])
+            self.assertIsInstance(extra["sizes"].get("bin_bytes"), int, step["id"])
+            self.assertTrue(extra["artifacts"], step["id"])
+            self.assertTrue(all(a.get("sha256") for a in extra["artifacts"]), step["id"])
+
+    def test_failed_build_still_reports_a_sizes_dict(self) -> None:
+        make_repo(self.root, examples=("01_lcd_hello",))
+        code, results, ctx = _run_verify(
+            self.root, runner_cls=lambda c: BuildSimRunner(c, build_ok=False)
+        )
+        self.assertEqual(code, 1)
+        payload = json.loads(report.report_paths(ctx)[1].read_text(encoding="utf-8"))
+        step = next(s for s in payload["steps"] if s["id"] == "build:app")
+        self.assertEqual(step["status"], "FAIL")
+        self.assertIsInstance(step["extra"]["sizes"], dict)     # key present, never absent
+        self.assertIsNone(step["extra"]["sizes"]["bin_bytes"])  # explicit null, not "missing"
+        self.assertEqual(step["extra"]["artifacts"], [])
+
     def test_fast_mode_skips_builds_but_keeps_ids(self) -> None:
         code, results, _ = _run_verify(self.root, fast=True)
         by_id = {r.id: r for r in results}

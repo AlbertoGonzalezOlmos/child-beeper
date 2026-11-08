@@ -16,6 +16,26 @@ from .context import Ctx, arduino_cli
 from .proc import Runner
 
 SCHEMA = 1
+SIZES_PLACEHOLDER = {"bin": None, "bin_bytes": None, "source": "not-built", "fallback": True}
+
+
+def normalise_step(result) -> dict:
+    """Build steps always expose `sizes` (dict, never null) and `artifacts` (list, never absent)."""
+    extra = dict(result.extra or {})
+    if result.id.startswith("build:") or result.id.startswith("arduino:"):
+        sizes = extra.get("sizes")
+        extra["sizes"] = dict(sizes) if isinstance(sizes, dict) else dict(SIZES_PLACEHOLDER)
+        if extra["sizes"].get("bin_bytes") is None:
+            extra["sizes"].setdefault("source", "not-built")
+        artifacts = extra.get("artifacts")
+        extra["artifacts"] = list(artifacts) if isinstance(artifacts, list) else []
+    return {
+        "id": result.id,
+        "status": result.status,
+        "detail": result.detail,
+        "duration_ms": result.duration_ms,
+        "extra": extra,
+    }
 VERIFICATION_LEVEL = "build-verified (compile/CLI only; hardware validation is tracked separately in docs/verification.md)"
 
 
@@ -112,16 +132,7 @@ def write_report(ctx: Ctx, results: Sequence, meta_dict: dict) -> tuple[Path, Pa
     md_path.parent.mkdir(parents=True, exist_ok=True)
     payload = dict(meta_dict)
     payload["totals"] = _totals(results)
-    payload["steps"] = [
-        {
-            "id": r.id,
-            "status": r.status,
-            "detail": r.detail,
-            "duration_ms": r.duration_ms,
-            **({"extra": r.extra} if r.extra else {}),
-        }
-        for r in results
-    ]
+    payload["steps"] = [normalise_step(r) for r in results]
     json_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     md_path.write_text(render_markdown(meta_dict, results), encoding="utf-8")
     return md_path, json_path

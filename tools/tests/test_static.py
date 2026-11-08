@@ -71,6 +71,64 @@ class TestForbiddenConstructs(TempRepoTest):
         self.assertEqual(staticchecks.scan_forbidden(self.ctx), [])
 
 
+class TestLcdInvariants(TempRepoTest):
+    """Item-2 hardware-proven invariants inside cb_lcd.c (io_handle must be set; no PSRAM DMA bufs)."""
+
+    GOOD = (
+        "static void f(void)\n"
+        "{\n"
+        "    const lvgl_port_display_cfg_t cfg = {\n"
+        "        .io_handle = s_io_handle,\n"
+        "        .panel_handle = s_panel,\n"
+        "        .flags = { .buff_dma = true, .buff_spiram = false, .swap_bytes = true },\n"
+        "    };\n"
+        "}\n"
+    )
+
+    def setUp(self) -> None:
+        super().setUp()
+        make_repo(self.root)
+        self.ctx = ctx_for(self.root)
+        self.path = self.root / staticchecks.LCD_INVARIANTS_FILE
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+
+    def test_good_file_passes(self) -> None:
+        self.path.write_text(self.GOOD, encoding="utf-8")
+        self.assertEqual(staticchecks.scan_lcd_invariants(self.ctx), [])
+
+    def test_missing_io_handle_is_flagged(self) -> None:
+        self.path.write_text(
+            self.GOOD.replace(".io_handle = s_io_handle,\n", ""), encoding="utf-8"
+        )
+        findings = staticchecks.scan_lcd_invariants(self.ctx)
+        self.assertTrue(any("io_handle" in f.rule for f in findings), [f.render() for f in findings])
+
+    def test_null_io_handle_is_flagged(self) -> None:
+        self.path.write_text(
+            self.GOOD.replace(".io_handle = s_io_handle,", ".io_handle = NULL,"), encoding="utf-8"
+        )
+        findings = staticchecks.scan_lcd_invariants(self.ctx)
+        self.assertTrue(any("io_handle" in f.rule for f in findings), [f.render() for f in findings])
+
+    def test_buff_spiram_true_is_flagged(self) -> None:
+        self.path.write_text(
+            self.GOOD.replace(".buff_spiram = false", ".buff_spiram = true"), encoding="utf-8"
+        )
+        findings = staticchecks.scan_lcd_invariants(self.ctx)
+        self.assertTrue(any("buff_spiram" in f.rule for f in findings), [f.render() for f in findings])
+
+    def test_absent_file_is_not_a_finding(self) -> None:
+        self.assertEqual(staticchecks.scan_lcd_invariants(self.ctx), [])
+
+    def test_audit_static_reports_the_findings(self) -> None:
+        self.path.write_text(
+            self.GOOD.replace(".buff_spiram = false", ".buff_spiram = true"), encoding="utf-8"
+        )
+        status, detail = staticchecks.audit_static(self.ctx)
+        self.assertEqual(status, "FAIL")
+        self.assertIn("buff_spiram", detail)
+
+
 class TestAbsolutePaths(TempRepoTest):
     def setUp(self) -> None:
         super().setUp()
