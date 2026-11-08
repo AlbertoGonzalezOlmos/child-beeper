@@ -1,14 +1,19 @@
 # 01_lcd_hello — display-stack diagnostic example
 
-**Status: build-verified (item 2); hardware-verified for the display pipeline — see
+**Status: build-verified (item 2); init + serial output hardware-verified — colours,
+geometry and sustained rendering are pending the operator's visual check (see
 [docs/verification.md](../../docs/verification.md) for the recorded results and the
-remaining hardware-day checklist.**
+remaining hardware-day checklist).**
 
 ## What it shows
 
 The full display stack through the BSP: backlight (LEDC, raised by cb_lcd's one-shot
 first-frame hook), the ST7789 panel over SPI2 @ 40 MHz with gap(34,0) + inversion, and
-LVGL 9.5 via esp_lvgl_port (PSRAM double buffers).
+LVGL 9.5 via esp_lvgl_port. The port requires the panel's **io handle** (not just the
+panel handle) to register its flush-ready callback, and its two draw buffers are
+**internal DMA-capable** (2 x 172x40 px x 2 B = 27,520 B of internal SRAM) — esp_lvgl_port
+rejects `buff_dma && buff_spiram` on this SoC. PSRAM instead holds LVGL's 64 KB heap and
+this example's 110 KB pattern canvas.
 
 On screen: kimi's diagnostic pattern — 8 vertical colour bars (white, yellow, cyan,
 green, magenta, red, blue, black), a full-width grey ramp along the bottom, 2x2 markers

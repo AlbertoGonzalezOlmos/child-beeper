@@ -127,13 +127,22 @@ void app_main(void)
         if (i == 1) {
             /* One-shot, after the first heartbeat: the console is reliably
              * attached by now, so the boot state is observable even though
-             * the early lines above were lost to the ~1 s re-attach delay. */
+             * the early lines above were lost to the ~1 s re-attach delay.
+             * Heap numbers are read here (after the UI is up) so they reflect
+             * the running display stack: internal free (after the two DMA draw
+             * buffers + LVGL task), PSRAM free (after the 110 KB canvas +
+             * LVGL's 64 KB pool is accounted in .bss), and the internal
+             * watermark (boot-time low-water mark). */
             ESP_LOGI(TAG,
-                     "boot summary: reset=%s cb_bsp=%s init(CB_PART_ALL)=%s idf=%s",
+                     "boot summary: reset=%s cb_bsp=%s init(CB_PART_ALL)=%s idf=%s "
+                     "heap int=%uB/%uB psram=%uB",
                      reset_reason_name(esp_reset_reason()),
                      cb_bsp_version(),
                      esp_err_to_name(err),
-                     esp_get_idf_version());
+                     esp_get_idf_version(),
+                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                     (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
+                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
         }
         vTaskDelay(pdMS_TO_TICKS(2000));
     }
