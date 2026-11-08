@@ -61,9 +61,15 @@ Both `lv_disp_drv_t` and `lv_scr_act(` are forbidden constructs (`audit-static`)
 - `CONFIG_SPIRAM_MODE_OCT=y` is **mandatory** (ESP32-S3R8 has octal PSRAM). Wrong/missing mode:
   boot loop or 0 bytes PSRAM at runtime *(hardware symptom; config side is asserted by
   `sdkconfig-assert`)*.
-- The verified LVGL buffer recipe: double buffer 172×40 px, RGB565, `buff_dma` **and**
-  `buff_spiram`, `swap_bytes=true`. Changing flags without re-testing on hardware risks DMA
-  alignment/tearing issues *(hardware)*.
+- **LVGL buffer recipe — hardware-measured (commit 92e336d)**: two **internal** DMA-capable
+  RGB565 buffers of 172×40 px (`buff_dma=true`, **`buff_spiram=false`**, `swap_bytes=true`,
+  27,520 B internal SRAM total). The skeleton's `buff_dma + buff_spiram` combo **compiles** but
+  the port rejects it at runtime with `ESP_ERR_NOT_SUPPORTED` ("Alloc DMA capable buffer in
+  SPIRAM is not supported!") on this SoC — never copy it from old snippets.
+- **Boot loop with `assert failed: lvgl_port_add_disp esp_lvgl_port_disp.c:120
+  (disp_cfg->io_handle != NULL)`**: `.io_handle` was not passed to `lvgl_port_add_disp` — the
+  panel io handle is mandatory (used for the flush-ready callback). Fixed in 92e336d; if you see
+  this assert, the display config regressed.
 - `CONFIG_SPIRAM_USE_MALLOC` is already the IDF default when SPIRAM is on; it is set explicitly in
   the board defaults for clarity.
 - Later Wi-Fi work should keep an eye on PSRAM contention (buffers vs radio RX).
@@ -96,6 +102,11 @@ to make these visible at a glance on hardware day.
   monitor is a live pass-through now; make sure stdin is a terminal (it warns otherwise, Ctrl-]
   may not reach it).
 - **Port disappears mid-flash**: normal — native USB re-enumerates on reset; wait and retry.
+- **"WARNING: Checksum mismatch between flashed and built applications"** (idf_monitor, on every
+  reset): **cosmetic** — the monitor's build-dir ELF is not byte-identical to the flashed image.
+  Happens when monitoring a different target than the one flashed (use
+  `./cb monitor --target <T>`) or after any rebuild (the app descriptor embeds build time/git
+  SHA). If the serial output shows the expected app tags/frames, the firmware is fine.
 - **Flash succeeds, app boot-loops**: suspect PSRAM config (above) or a brownout from a bright RGB
   LED at startup (item 3 caps brightness).
 

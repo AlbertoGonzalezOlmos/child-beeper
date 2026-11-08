@@ -164,9 +164,14 @@ void cb_lcd_lvgl_unlock(void);
   **unmodified defaults (A7, verified)**: `task_priority 4`, `task_stack 7168`,
   `task_max_sleep_ms 500`, `timer_period_ms 5` — then `lvgl_port_add_disp` with
   `buffer_size = CB_LCD_H_RES * 40` **pixels**, `double_buffer = true`,
-  `LV_COLOR_FORMAT_RGB565`, flags `buff_dma + buff_spiram + swap_bytes` (buffers in OCT PSRAM).
-  Port-init and display-add success are tracked separately (A8) so a failed `add_disp` can be
-  retried without spawning a second LVGL task.
+  `LV_COLOR_FORMAT_RGB565`, `swap_bytes = true`, and — **measured on hardware, commit 92e336d** —
+  `.io_handle` **must be passed** (esp_lvgl_port 2.9.0 asserts `disp_cfg->io_handle != NULL` at
+  `esp_lvgl_port_disp.c:120`; omitting it boot-looped the board) and
+  **`buff_dma = true` with `buff_spiram = false`**: two **internal** DMA-capable RGB565 draw
+  buffers of 172×40 px (2 × 13,760 B = **27,520 B internal SRAM**). The port **rejects**
+  `buff_dma + buff_spiram` at runtime with `ESP_ERR_NOT_SUPPORTED` on this SoC — it compiles but
+  must never be used. Port-init and display-add success are tracked separately (A8) so a failed
+  `add_disp` can be retried without spawning a second LVGL task (retry path runtime-untested).
 - **Examples must not include `esp_lvgl_port.h`** — the six symbols above are the whole surface;
   all LVGL access goes through `cb_lcd_lvgl_lock()/unlock()`.
 

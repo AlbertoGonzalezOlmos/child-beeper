@@ -85,9 +85,12 @@ Other frozen constants: `CB_LCD_SPI_HOST 1` (= `SPI2_HOST`; the skeleton-verifie
   frame is drawn** (ruling A2 — examples must not switch it on themselves).
 - LVGL 9.5 via `esp_lvgl_port` 2.9.0 with **unmodified** `ESP_LVGL_PORT_INIT_CONFIG()` defaults
   (A7, verified against the 2.9.0 header): task priority **4**, task stack **7168**,
-  `task_max_sleep_ms 500`, `timer_period_ms 5`. Draw buffers: double, `CB_LCD_H_RES*40` px each,
-  RGB565, in OCT PSRAM, `buff_dma + buff_spiram + swap_bytes` (PSRAM/DMA runtime integrity is a
-  hardware-day item). Examples allocate full-frame canvases (172×320×2 = 110080 B) with
+  `task_max_sleep_ms 500`, `timer_period_ms 5`. Draw buffers (**hardware-measured recipe**, commit
+  92e336d): two **internal DMA-capable** RGB565 buffers of `CB_LCD_H_RES*40` = 172×40 px each
+  (2 × 13,760 B = 27,520 B internal SRAM), `buff_dma=true`, **`buff_spiram=false`** — the port
+  rejects `buff_dma + buff_spiram` with `ESP_ERR_NOT_SUPPORTED` on this SoC — `swap_bytes=true`,
+  and `io_handle` passed to `lvgl_port_add_disp` (assert at `esp_lvgl_port_disp.c:120`).
+  Examples allocate full-frame canvases (172×320×2 = 110080 B) with
   `heap_caps_malloc(…, MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)` — never as a static array (A10).
 
 ## IMU (QMI8658, I2C)

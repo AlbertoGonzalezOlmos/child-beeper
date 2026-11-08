@@ -28,7 +28,7 @@
 ./cb verify [--fast] [--no-arduino] [--offline]
 ./cb ports [--json]
 ./cb flash [--port P] [--target T]
-./cb monitor [--port P]
+./cb monitor [--port P] [--target T]     # live stream; T = flashed target (default app)
 ./cb selftest [--port P]
 ./cb arduino [SKETCH...] [--install-libs]
 ./cb arduino-install

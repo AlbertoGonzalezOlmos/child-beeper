@@ -27,6 +27,14 @@ Rule (also in `AGENTS.md`): *never claim hardware-verified without a board.*
   (`Ctrl-]` quits).
 - Guard logic with a real board present: `CB_FORCE_NO_PORTS=1 ./cb flash` still exits **2**
   (step `guards-no-board`).
+- **Item-2 display session (2026-11-08)**: `./cb flash --target 01_lcd_hello` succeeds; serial
+  shows `I (701) cb_lcd: display: 172x320 ST7789, spi2 @40MHz, gap(34,0)` and
+  `I (732) lcd_hello: display: 172x320 ST7789, spi2 @40MHz, gap(34,0), lvgl 9.5`, then
+  `lcd_hello: frame 1..6` every 2 s — panel init, LVGL port and the render loop run on hardware.
+  (The first flash attempt boot-looped on the `esp_lvgl_port_disp.c:120` io_handle assert;
+  fixed in commit 92e336d together with the internal-DMA buffer config.) **Colours, x-gap,
+  inversion, mirroring, backlight timing and tearing remain hardware-PENDING** — they need a
+  human looking at the panel (checklist item 6).
 
 **hardware-UNAVAILABLE (with reasons)**
 - **Early boot lines are not observable** on the USB-Serial/JTAG console: after a reset the native
@@ -74,7 +82,8 @@ Steps run in a **fixed order** with **stable ids**; each prints `[PASS]/[FAIL]/[
 9. `sdkconfig-assert` — per built target: OCT PSRAM, PSRAM 80 M, 16 MB flash, USB-Serial/JTAG
    console, custom partition table; plus the built partition binary exists and the table contains
    `factory,app,factory,0x10000,3M` and `storage,data,fat,0x310000,0x800000`.
-   **For `app` and `01_lcd_hello` it additionally requires** (A9): `CONFIG_LV_CONF_SKIP=y`,
+   **For `app` and `01_lcd_hello` it additionally requires** (A9; key list quoted from
+   `tools/cbchecks/build.py:SDKCONFIG_LVGL_KEYS`): `CONFIG_LV_CONF_SKIP=y`,
    `CONFIG_LV_COLOR_DEPTH_16=y`, `CONFIG_LV_COLOR_DEPTH=16`, `CONFIG_LV_OS_NONE=y`,
    `CONFIG_LV_FONT_DEFAULT_MONTSERRAT_14=y`, `CONFIG_LV_FONT_MONTSERRAT_14=y`,
    `CONFIG_LV_USE_LABEL=y`, `CONFIG_LV_USE_IMAGE=y`; and **forbids** `CONFIG_LV_CONF_MINIMAL=y`.
@@ -170,7 +179,8 @@ Procedure per line: run the command, compare with "expected", tick and fill in d
       - resolution label legible near the bottom centre, not covering the corner markers;
       - **no white flash at boot** — backlight stays dark until the first LVGL frame, then comes
         on at 100 % (A2 bring-up hook);
-      - sustained frames show no tearing/corruption (PSRAM-DMA runtime proof, A7/A10 flags).
+      - sustained frames show no tearing/corruption (internal-DMA draw buffers + PSRAM canvas;
+        flags `buff_dma=true`/`buff_spiram=false`, see [api.md](api.md)).
 - [ ] 7. (item 3+) Battery reading within ±5 % of a multimeter; RGB visible but dim-capped;
       button: CLICK arrives ~350 ms after release, a double click yields RELEASE then DOUBLE_CLICK,
       hold ≥800 ms yields LONG_PRESS once and no click on release.
