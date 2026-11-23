@@ -24,6 +24,7 @@ idf_component_register(
         "src/cb_rgb_math.c"
         "src/cb_battery_math.c"
         "src/cb_rgb.c"
+        "src/cb_button.c"
     INCLUDE_DIRS
         "include"
     REQUIRES
@@ -31,4 +32,6 @@ idf_component_register(
     PRIV_REQUIRES
         esp_driver_spi
         esp_driver_ledc
+        esp_driver_gpio
+        esp_timer
 )
