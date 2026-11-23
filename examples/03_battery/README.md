@@ -21,6 +21,7 @@ I (…) battery: ready
 I (…) battery: raw=2587 pin_mv=1333 battery_mv=4027 calibrated=1 plausible=1   (every 2 s)
 I (…) battery: raw=2587 pin_mv=1333 battery_mv=4027 calibrated=1 plausible=1
 I (…) battery: alive #1                                                        (every 5 s)
+W (…) battery: read failed: ESP_ERR_TIMEOUT     (R13b: one-shot, then polling stops)
 ```
 
 The `ready` line prints as soon as init returns — no artificial delay; if early lines are
@@ -33,8 +34,9 @@ I (…) cb_battery: reading plausible again
 ```
 
 Part failures are logged by `cb_bsp` (`W (…) cb_bsp: BATTERY: init failed (optional,
-suppressed): …`); after a read failure the example stops polling (no WARN spam) and the
-`battery: alive` heartbeat continues.
+suppressed): …`); on a read failure the example logs `battery: read failed: %s` **once**
+(R13b, frozen text) and then stops polling — no WARN spam — while the `battery: alive`
+heartbeat continues.
 
 | Symptom | Cause |
 |---|---|
@@ -42,6 +44,7 @@ suppressed): …`); after a read failure the example stops polling (no WARN spam
 | `plausible=1` with no cell | floating input landed inside the heuristic window — expected limitation |
 | `calibrated=0` | eFuse curve-fitting unavailable on this chip; linear `cb_math` fallback is in use (serial fact) |
 | `battery_mv` off by a few % | divider/gain tolerances — only a multimeter establishes ±5 % accuracy (human) |
+| samples stop after `read failed: …` | the ADC read path is down (the one-shot WARN carries the error name); alive keeps the loop provably running |
 
 ## Build / flash
 

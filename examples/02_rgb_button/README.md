@@ -32,7 +32,9 @@ I (…) rgb_button: cycle 4 r=51 g=51 b=51
 I (…) rgb_button: cycle 5 r=0 g=0 b=0
 I (…) rgb_button: event CLICK            (per BOOT press; needs a finger)
 I (…) rgb_button: alive #1               (every 5 s)
-W (…) rgb_button: cycle 6 failed: ESP_ERR_INVALID_STATE   (only if the LED path is down)
+W (…) rgb_button: cycle 6 failed: ESP_ERR_INVALID_STATE   (only if the LED path is down;
+                                        gated R14b: one line per failure streak, silent
+                                        until a cycle succeeds again)
 ```
 
 The `r/g/b` values are post-dim ("as sent"): red `(255,0,0)` is capped to `(51,0,0)`, white to
@@ -46,7 +48,7 @@ the repeating `cycle`/`alive` lines carry the contract. Driver-level lines from
 |---|---|
 | LED dark, `cycle N r=…` lines OK | visibility/brightness of the 20 % cap through the acrylic (human check) |
 | red/green visibly swapped etc. | colour-element order (GRB wiring) — human check |
-| `cycle N failed: <err>` every step | RMT/led_strip path down; the error name (`ESP_ERR_INVALID_STATE` = not initialised) narrows it |
+| `cycle N failed: <err>` on the first failing step | RMT/led_strip path down; the error name (`ESP_ERR_INVALID_STATE` = not initialised) narrows it. Gated (R14b): one WARN per failure streak — later failures log nothing until a cycle succeeds again, so a dead LED shows one `failed` line and then only silent cycle numbers |
 | no `event` lines ever | button part down (see `cb_bsp`/`cb_button` WARNs) or nobody pressed — gestures are a human check |
 | `event CLICK` feels late/laggy | FSM defers CLICK ≈350 ms by design; timing is a human check |
 

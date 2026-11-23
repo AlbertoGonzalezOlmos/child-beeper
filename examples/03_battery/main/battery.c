@@ -11,6 +11,7 @@
  *   I (…) battery: ready
  *   I (…) battery: raw=%d pin_mv=%ld battery_mv=%ld calibrated=%d plausible=%d  (every 2 s)
  *   I (…) battery: alive #%u                                                    (every 5 s)
+ *   W (…) battery: read failed: %s                    (R13b: one-shot, then polling stops)
  *
  * The transition-gated no-cell WARN is owned by the driver (R6b):
  *   W (…) cb_battery: implausible %ld mV (no cell inserted?)
@@ -50,13 +51,16 @@ void app_main(void)
     for (;;) {
         if (polling) {
             cb_battery_sample_t s;
-            if (cb_battery_read(&s) == ESP_OK) {
+            esp_err_t err = cb_battery_read(&s);
+            if (err == ESP_OK) {
                 ESP_LOGI(TAG, "raw=%d pin_mv=%ld battery_mv=%ld calibrated=%d plausible=%d",
                          s.raw, (long)s.pin_mv, (long)s.battery_mv,
                          (int)s.calibrated, (int)s.plausible);
             } else {
-                /* Never hammer a dead part (R7: no WARN spam) — the driver's
-                 * one-shot WARN above already named the cause. */
+                /* R13b: one-shot frozen line naming the cause, then never
+                 * hammer a dead part (R7: no WARN spam) — the alive heartbeat
+                 * carries the contract on. */
+                ESP_LOGW(TAG, "read failed: %s", esp_err_to_name(err));
                 polling = false;
             }
         }

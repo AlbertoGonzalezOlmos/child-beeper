@@ -13,7 +13,9 @@
  * Serial contract (frozen strings — also quoted in README.md):
  *   I (…) rgb_button: ready poll_ms=10 cap_percent=20
  *   I (…) rgb_button: cycle %u r=%u g=%u b=%u      (every 2 s + on CLICK)
- *   W (…) rgb_button: cycle %u failed: %s          (only on error)
+ *   W (…) rgb_button: cycle %u failed: %s          (on error; gated — once per
+ *                                                   failure streak until a cycle
+ *                                                   succeeds again, R14b)
  *   I (…) rgb_button: event %s                     (PRESS|RELEASE|CLICK|DOUBLE_CLICK|LONG_PRESS)
  *   I (…) rgb_button: alive #%u                    (every 5 s)
  *
@@ -54,6 +56,7 @@ static const uint8_t k_steps[5][3] = {
 static volatile bool s_click_pending; /* esp_timer task -> app_main (single flag) */
 static unsigned s_cycle;              /* only ever written by app_main */
 static unsigned s_alive;              /* only ever written by app_main */
+static bool s_cycle_error_active;     /* R14b: one WARN per failure streak */
 
 static void step_cycle(void)
 {
@@ -66,9 +69,16 @@ static void step_cycle(void)
     cb_rgb_math_dim(&r, &g, &b);      /* values as sent (peak cap 51) */
     esp_err_t err = cb_rgb_set(r, g, b);
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "cycle %u failed: %s", n, esp_err_to_name(err));
+        /* R14b: transition-gated — a dead LED path must not spam the console
+         * every 2 s. First failure of a streak logs (frozen text); silent
+         * until a cycle succeeds again. */
+        if (!s_cycle_error_active) {
+            s_cycle_error_active = true;
+            ESP_LOGW(TAG, "cycle %u failed: %s", n, esp_err_to_name(err));
+        }
         return;
     }
+    s_cycle_error_active = false;
     ESP_LOGI(TAG, "cycle %u r=%u g=%u b=%u", n, r, g, b);
 }
 
