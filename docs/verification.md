@@ -44,6 +44,11 @@ Rule (also in `AGENTS.md`): *never claim hardware-verified without a board.*
   **hardware-PENDING (needs human)**.
 - **Attached-board fast gate (2026-11-23)**: `CB_BUILD_ROOT=build/coordinator ./cb verify --fast`
   completed with **7 pass, 0 fail, 5 skip**, including 106 CLI tests.
+- **Item-3 agent-side checks (2026-11-23; not the final coordinator gate)**: with
+  `CB_BUILD_ROOT=build/kimi-k31-pro`, `./cb test` passed all **39** host tests (`# failed 0`),
+  `./cb verify --fast` completed **7 pass, 0 fail, 7 skip** (109 CLI tests), and
+  `./cb build app 02_rgb_button 03_battery` passed all three targeted builds. These are build/test
+  results only: the full coordinator `./cb verify` and all item-3 serial checks remain **PENDING**.
 
 **hardware-UNAVAILABLE (with reasons)**
 - **Early boot lines may be unobservable** on the USB-Serial/JTAG console: after a reset the native
@@ -247,7 +252,7 @@ Procedure per line: run the command, compare with "expected", tick and fill in d
         `battery: ready`, then repeating
         `battery: raw=%d pin_mv=%ld battery_mv=%ld calibrated=%d plausible=%d` every 2 s. Capture
         at least two lines and record all values, including which calibration value (0 or 1) ran.
-        `battery: alive #%u` is the degraded-heartbeat form. The driver emits no per-read data
+        `battery: alive #%u` every 5 s, including degraded operation. The driver emits no per-read data
         line. On transition to implausible it must emit exactly
         `W cb_battery: implausible %ld mV (no cell inserted?)`; recovery emits
         `I cb_battery: reading plausible again`. A stable state must not repeat those messages.
