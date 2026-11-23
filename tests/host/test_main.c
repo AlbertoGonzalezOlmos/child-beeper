@@ -12,6 +12,7 @@
 #include "cb_pattern.h"
 #include "cb_rgb_math.h"
 #include "cb_battery_math.h"
+#include "cb_imu_math.h"
 
 static int tests_run;
 static int tests_failed;
@@ -889,6 +890,208 @@ static void test_battery_math_plausible(void)
     CHECK(!cb_battery_math_plausible(-1));
 }
 
+/* ---- item 4: cb_imu_math decode (R24 names/vectors, R17 contract) ---- */
+
+static void imu_zero_buf(uint8_t raw[CB_IMU_RAW_LEN])
+{
+    memset(raw, 0, CB_IMU_RAW_LEN);
+}
+
+static void imu_put_le16(uint8_t raw[CB_IMU_RAW_LEN], size_t offset, int16_t value)
+{
+    raw[offset] = (uint8_t)((uint16_t)value & 0xFFu);
+    raw[offset + 1] = (uint8_t)(((uint16_t)value >> 8) & 0xFFu);
+}
+
+static void test_imu_math_raw_len(void)
+{
+    CHECK_INT(14, CB_IMU_RAW_LEN);
+    CHECK_INT(14, CB_QMI_GZ_H - CB_QMI_TEMP_L + 1);
+    CHECK_INT(2, CB_QMI_AX_L - CB_QMI_TEMP_L);
+    CHECK_INT(8, CB_QMI_GX_L - CB_QMI_TEMP_L);
+}
+
+static void test_imu_math_decode_resting(void)
+{
+    static const uint8_t raw[CB_IMU_RAW_LEN] = {
+        0x00, 0x19, 0, 0, 0, 0, 0x00, 0x10, 0, 0, 0, 0, 0, 0
+    };
+    cb_imu_sample_t out;
+
+    CHECK(cb_imu_math_decode(raw, 8, 512, &out));
+    CHECK_CLOSE(0.0f, out.ax_g);
+    CHECK_CLOSE(0.0f, out.ay_g);
+    CHECK_CLOSE(1.0f, out.az_g);
+    CHECK_CLOSE(0.0f, out.gx_dps);
+    CHECK_CLOSE(0.0f, out.gy_dps);
+    CHECK_CLOSE(0.0f, out.gz_dps);
+    CHECK_CLOSE(25.0f, out.temp_c);
+}
+
+static void test_imu_math_decode_accel_sign(void)
+{
+    static const uint8_t raw[CB_IMU_RAW_LEN] = {
+        0, 0, 0x00, 0xE0, 0x00, 0x08, 0x00, 0xF0, 0, 0, 0, 0, 0, 0
+    };
+    cb_imu_sample_t out;
+
+    CHECK(cb_imu_math_decode(raw, 8, 512, &out));
+    CHECK_CLOSE(-2.0f, out.ax_g);
+    CHECK_CLOSE(0.5f, out.ay_g);
+    CHECK_CLOSE(-1.0f, out.az_g);
+    CHECK_CLOSE(0.0f, out.gx_dps);
+    CHECK_CLOSE(0.0f, out.gy_dps);
+    CHECK_CLOSE(0.0f, out.gz_dps);
+    CHECK_CLOSE(0.0f, out.temp_c);
+}
+
+static void test_imu_math_decode_gyro(void)
+{
+    static const uint8_t raw[CB_IMU_RAW_LEN] = {
+        0, 0, 0, 0, 0, 0, 0, 0, 0x00, 0x20, 0x00, 0xC0, 0x00, 0x01
+    };
+    cb_imu_sample_t out;
+
+    CHECK(cb_imu_math_decode(raw, 8, 512, &out));
+    CHECK_CLOSE(128.0f, out.gx_dps);
+    CHECK_CLOSE(-256.0f, out.gy_dps);
+    CHECK_CLOSE(4.0f, out.gz_dps);
+}
+
+static void test_imu_math_decode_ranges(void)
+{
+    static const unsigned accel_ranges[] = { 2, 4, 8, 16 };
+    uint8_t raw[CB_IMU_RAW_LEN];
+    cb_imu_sample_t out;
+    size_t i;
+
+    for (i = 0; i < sizeof(accel_ranges) / sizeof(accel_ranges[0]); ++i) {
+        imu_zero_buf(raw);
+        imu_put_le16(raw, 2, 4096);
+        CHECK(cb_imu_math_decode(raw, accel_ranges[i], 512, &out));
+        CHECK_CLOSE((float)accel_ranges[i] / 8.0f, out.ax_g);
+    }
+
+    imu_zero_buf(raw);
+    imu_put_le16(raw, 8, INT16_MIN);
+    CHECK(cb_imu_math_decode(raw, 8, 16, &out));
+    CHECK_CLOSE(-16.0f, out.gx_dps);
+
+    imu_zero_buf(raw);
+    imu_put_le16(raw, 8, INT16_MAX);
+    CHECK(cb_imu_math_decode(raw, 8, 1024, &out));
+    CHECK_CLOSE(1024.0f * 32767.0f / 32768.0f, out.gx_dps);
+}
+
+static void test_imu_math_decode_temp(void)
+{
+    static const struct {
+        uint16_t raw;
+        float expected;
+    } cases[] = {
+        { 0x0000, 0.0f },
+        { 0x0100, 1.0f },
+        { 0x1900, 25.0f },
+        { 0x0080, 0.5f },
+        { 0xFF00, -1.0f },
+        { 0x8000, -128.0f },
+    };
+    uint8_t raw[CB_IMU_RAW_LEN];
+    cb_imu_sample_t out;
+    size_t i;
+
+    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+        imu_zero_buf(raw);
+        imu_put_le16(raw, 0, (int16_t)cases[i].raw);
+        CHECK(cb_imu_math_decode(raw, 8, 512, &out));
+        CHECK_CLOSE(cases[i].expected, out.temp_c);
+    }
+}
+
+static void test_imu_math_decode_layout(void)
+{
+    static const uint8_t raw[CB_IMU_RAW_LEN] = {
+        0x00, 0x01, 0x00, 0x10, 0x00, 0x20, 0x00, 0x30,
+        0x00, 0x40, 0x00, 0x50, 0x00, 0x60
+    };
+    cb_imu_sample_t out;
+
+    CHECK(cb_imu_math_decode(raw, 8, 512, &out));
+    CHECK_CLOSE(1.0f, out.temp_c);
+    CHECK_CLOSE(1.0f, out.ax_g);
+    CHECK_CLOSE(2.0f, out.ay_g);
+    CHECK_CLOSE(3.0f, out.az_g);
+    CHECK_CLOSE(256.0f, out.gx_dps);
+    CHECK_CLOSE(320.0f, out.gy_dps);
+    CHECK_CLOSE(384.0f, out.gz_dps);
+}
+
+static void test_imu_math_decode_invalid(void)
+{
+    uint8_t raw[CB_IMU_RAW_LEN];
+    cb_imu_sample_t sentinel;
+    cb_imu_sample_t out;
+
+    imu_zero_buf(raw);
+    sentinel.ax_g = 1.0f;
+    sentinel.ay_g = 2.0f;
+    sentinel.az_g = 3.0f;
+    sentinel.gx_dps = 4.0f;
+    sentinel.gy_dps = 5.0f;
+    sentinel.gz_dps = 6.0f;
+    sentinel.temp_c = 7.0f;
+
+    out = sentinel;
+    CHECK(!cb_imu_math_decode(NULL, 8, 512, &out));
+    CHECK(memcmp(&sentinel, &out, sizeof(out)) == 0);
+
+    out = sentinel;
+    CHECK(!cb_imu_math_decode(raw, 8, 512, NULL));
+    CHECK(memcmp(&sentinel, &out, sizeof(out)) == 0);
+
+    out = sentinel;
+    CHECK(!cb_imu_math_decode(raw, 3, 512, &out));
+    CHECK(memcmp(&sentinel, &out, sizeof(out)) == 0);
+
+    out = sentinel;
+    CHECK(!cb_imu_math_decode(raw, 8, 100, &out));
+    CHECK(memcmp(&sentinel, &out, sizeof(out)) == 0);
+
+    out = sentinel;
+    CHECK(!cb_imu_math_decode(raw, 0, 512, &out));
+    CHECK(memcmp(&sentinel, &out, sizeof(out)) == 0);
+
+    out = sentinel;
+    CHECK(!cb_imu_math_decode(raw, 8, 15, &out));
+    CHECK(memcmp(&sentinel, &out, sizeof(out)) == 0);
+}
+
+static void test_imu_math_decode_int16_min(void)
+{
+    uint8_t raw[CB_IMU_RAW_LEN];
+    cb_imu_sample_t out;
+
+    imu_zero_buf(raw);
+    imu_put_le16(raw, 2, INT16_MIN);
+    CHECK(cb_imu_math_decode(raw, 8, 512, &out));
+    CHECK_CLOSE(-8.0f, out.ax_g);
+
+    imu_zero_buf(raw);
+    imu_put_le16(raw, 8, INT16_MIN);
+    CHECK(cb_imu_math_decode(raw, 8, 512, &out));
+    CHECK_CLOSE(-512.0f, out.gx_dps);
+
+    imu_zero_buf(raw);
+    imu_put_le16(raw, 0, INT16_MIN);
+    CHECK(cb_imu_math_decode(raw, 8, 512, &out));
+    CHECK_CLOSE(-128.0f, out.temp_c);
+
+    imu_zero_buf(raw);
+    imu_put_le16(raw, 2, -1);
+    CHECK(cb_imu_math_decode(raw, 8, 512, &out));
+    CHECK_CLOSE(-8.0f / 32768.0f, out.ax_g);
+}
+
 int main(void)
 {
     run_test(test_pins_lcd, "pins LCD and RGB contract");
@@ -929,6 +1132,15 @@ int main(void)
     run_test(test_battery_macro_contract, "battery divider/gain/window macro contract");
     run_test(test_battery_math_conversion, "battery mV conversion, clamp and saturation");
     run_test(test_battery_math_plausible, "battery plausibility inclusive bounds");
+    run_test(test_imu_math_raw_len, "imu burst length contract");
+    run_test(test_imu_math_decode_resting, "imu decode resting vector");
+    run_test(test_imu_math_decode_accel_sign, "imu decode accel signs");
+    run_test(test_imu_math_decode_gyro, "imu decode gyro values");
+    run_test(test_imu_math_decode_ranges, "imu decode per-range scaling");
+    run_test(test_imu_math_decode_temp, "imu decode temperature");
+    run_test(test_imu_math_decode_layout, "imu decode burst layout");
+    run_test(test_imu_math_decode_invalid, "imu decode invalid input, out untouched");
+    run_test(test_imu_math_decode_int16_min, "imu decode INT16_MIN without UB");
 
     printf("1..%d\n", tests_run);
     printf("# failed %d\n", tests_failed);
