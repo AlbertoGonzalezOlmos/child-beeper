@@ -1,7 +1,8 @@
 /*
- * cb_bsp.h — Child Beeper board support package, public API (item 1: skeleton).
+ * cb_bsp.h — Child Beeper board support package, public API (items 1-3).
  *
- * Owner: mimo26-pro. Names/signatures/values below are frozen by CONTRACT.md;
+ * Owner: deepseek-pro (CONTRACT lane cb_bsp, items 3+; item-1/2 owner
+ * mimo26-pro). Names/signatures/values below are frozen by CONTRACT.md;
  * change them only through the orchestrator's review round.
  *
  * Error policy (CONTRACT R5): strict parts = {LCD, LVGL}; every other part is
@@ -43,7 +44,7 @@ typedef enum {
 esp_err_t cb_bsp_init(uint32_t parts);   /* inits only the requested parts, in fixed order:
                                             BACKLIGHT -> RGB -> I2C -> IMU -> BUTTON -> BATTERY
                                             -> LCD -> LVGL -> SD (SD last: mount can block)      */
-const char *cb_bsp_version(void);        /* "0.1.0" */
+const char *cb_bsp_version(void);        /* "0.2.0" (R8: MINOR bumps per item) */
 
 #ifdef __cplusplus
 }

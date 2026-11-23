@@ -20,14 +20,50 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "freertos/task.h"
 
 static const char *TAG = "cb_battery";
 
 static adc_oneshot_unit_handle_t s_adc;   /* NULL until init succeeded */
 static adc_cali_handle_t s_cali;          /* NULL when uncalibrated */
 static bool s_calibrated;
-static bool s_warned_implausible;         /* R6b transition gate */
 static SemaphoreHandle_t s_mutex;         /* NULL until init succeeded */
+
+/* R14b: gated-WARN state shared by several tasks — check-and-update under
+ * s_log_lock; the caller logs outside it. s_warned_implausible is the R6b
+ * transition gate and is only ever touched while holding s_mutex (see
+ * cb_battery_read). */
+static portMUX_TYPE s_log_lock = portMUX_INITIALIZER_UNLOCKED;
+static TickType_t s_last_busy_log;        /* busy-mutex WARN, at most 1/s */
+static bool s_warned_no_init;             /* pre-init WARN, one-shot */
+static bool s_warned_implausible;         /* R6b transition gate (guarded by s_mutex) */
+
+/* Rate limit (≤1 Hz): decide under the lock, log outside it. */
+static bool rate_limited(TickType_t *last)
+{
+    TickType_t now = xTaskGetTickCount();
+    bool allow;
+
+    portENTER_CRITICAL(&s_log_lock);
+    allow = ((TickType_t)(now - *last) >= pdMS_TO_TICKS(1000));
+    if (allow) {
+        *last = now;
+    }
+    portEXIT_CRITICAL(&s_log_lock);
+    return allow;
+}
+
+/* One-shot gate for a permanent state (cleared again by cb_battery_init). */
+static bool one_shot(bool *done)
+{
+    bool allow;
+
+    portENTER_CRITICAL(&s_log_lock);
+    allow = !*done;
+    *done = true;
+    portEXIT_CRITICAL(&s_log_lock);
+    return allow;
+}
 
 /* Frozen enum bindings (cb_lcd ruling-1 style: no raw casts). */
 _Static_assert(CB_BAT_ADC_UNIT == ADC_UNIT_1, "frozen ADC unit");
@@ -95,12 +131,19 @@ esp_err_t cb_battery_init(void)
 #endif
 
     ESP_LOGI(TAG, "adc up, cali %s", s_calibrated ? "curve" : "fallback");
+
+    /* The part is up again: re-arm the pre-init one-shot WARN. */
+    portENTER_CRITICAL(&s_log_lock);
+    s_warned_no_init = false;
+    portEXIT_CRITICAL(&s_log_lock);
     return ESP_OK;
 }
 
 esp_err_t cb_battery_read(cb_battery_sample_t *out)
 {
     cb_battery_sample_t sample = { 0 };
+    bool warn_implausible = false;
+    bool recover_plausible = false;
     int cali_mv = 0;
     esp_err_t err;
 
@@ -108,11 +151,15 @@ esp_err_t cb_battery_read(cb_battery_sample_t *out)
         return ESP_ERR_INVALID_ARG;
     }
     if (s_adc == NULL || s_mutex == NULL) {
-        ESP_LOGW(TAG, "not initialized");
+        if (one_shot(&s_warned_no_init)) {
+            ESP_LOGW(TAG, "not initialized");
+        }
         return ESP_ERR_INVALID_STATE;
     }
     if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
-        ESP_LOGW(TAG, "busy");
+        if (rate_limited(&s_last_busy_log)) {
+            ESP_LOGW(TAG, "busy");
+        }
         return ESP_ERR_TIMEOUT;
     }
 
@@ -132,6 +179,19 @@ esp_err_t cb_battery_read(cb_battery_sample_t *out)
         }
         sample.battery_mv = cb_battery_math_mv_from_pin_mv(sample.pin_mv);
         sample.plausible = cb_battery_math_plausible(sample.battery_mv);
+
+        /* R6b/R14b: the implausible<->plausible transition decision happens
+         * INSIDE s_mutex so concurrent readers cannot reorder WARN/recovery;
+         * the log lines themselves are emitted outside the lock. */
+        if (!sample.plausible) {
+            if (!s_warned_implausible) {
+                s_warned_implausible = true;
+                warn_implausible = true;
+            }
+        } else if (s_warned_implausible) {
+            s_warned_implausible = false;
+            recover_plausible = true;
+        }
     }
     xSemaphoreGive(s_mutex);
 
@@ -139,15 +199,11 @@ esp_err_t cb_battery_read(cb_battery_sample_t *out)
         return err;   /* out untouched */
     }
 
-    /* R6b: transition-gated WARN / recovery INFO; no per-read data line. */
-    if (!sample.plausible) {
-        if (!s_warned_implausible) {
-            s_warned_implausible = true;
-            ESP_LOGW(TAG, "implausible %ld mV (no cell inserted?)",
-                     (long)sample.battery_mv);
-        }
-    } else if (s_warned_implausible) {
-        s_warned_implausible = false;
+    if (warn_implausible) {
+        ESP_LOGW(TAG, "implausible %ld mV (no cell inserted?)",
+                 (long)sample.battery_mv);
+    }
+    if (recover_plausible) {
         ESP_LOGI(TAG, "reading plausible again");
     }
 

@@ -24,18 +24,39 @@ static const char *TAG = "cb_rgb";
 
 static led_strip_handle_t s_strip;   /* NULL until init succeeded */
 static SemaphoreHandle_t s_mutex;    /* NULL until init succeeded */
-static TickType_t s_last_busy_log;   /* R4b: busy-mutex log at most 1/s */
 
-/* R4b: rate-limit the busy-mutex WARN to at most one line per second.
- * FreeRTOS ticks (CONFIG_FREERTOS_HZ=1000) give the 1 ms granularity. */
-static void log_busy_once(void)
+/* R14b: gated-WARN state, shared by several tasks — every check-and-update
+ * happens under s_log_lock; the caller logs outside it. */
+static portMUX_TYPE s_log_lock = portMUX_INITIALIZER_UNLOCKED;
+static TickType_t s_last_busy_log;      /* busy-mutex WARN, at most 1/s */
+static TickType_t s_last_set_fail_log;  /* set-failed WARN, at most 1/s */
+static bool s_warned_no_init;           /* pre-init WARN, one-shot */
+
+/* Rate limit (≤1 Hz): decide under the lock, log outside it. */
+static bool rate_limited(TickType_t *last)
 {
     TickType_t now = xTaskGetTickCount();
+    bool allow;
 
-    if ((TickType_t)(now - s_last_busy_log) >= pdMS_TO_TICKS(1000)) {
-        s_last_busy_log = now;
-        ESP_LOGW(TAG, "busy: refresh in progress");
+    portENTER_CRITICAL(&s_log_lock);
+    allow = ((TickType_t)(now - *last) >= pdMS_TO_TICKS(1000));
+    if (allow) {
+        *last = now;
     }
+    portEXIT_CRITICAL(&s_log_lock);
+    return allow;
+}
+
+/* One-shot gate for a permanent state (cleared again by cb_rgb_init). */
+static bool one_shot(bool *done)
+{
+    bool allow;
+
+    portENTER_CRITICAL(&s_log_lock);
+    allow = !*done;
+    *done = true;
+    portEXIT_CRITICAL(&s_log_lock);
+    return allow;
 }
 
 esp_err_t cb_rgb_init(void)
@@ -84,6 +105,11 @@ esp_err_t cb_rgb_init(void)
     }
 
     ESP_LOGI(TAG, "rmt up gpio%d, cap %u%%", CB_PIN_RGB, CB_RGB_DIM_CAP_PERCENT);
+
+    /* The part is up again: re-arm the pre-init one-shot WARN. */
+    portENTER_CRITICAL(&s_log_lock);
+    s_warned_no_init = false;
+    portEXIT_CRITICAL(&s_log_lock);
     return ESP_OK;
 }
 
@@ -92,13 +118,17 @@ esp_err_t cb_rgb_set(uint8_t r, uint8_t g, uint8_t b)
     esp_err_t err;
 
     if (s_strip == NULL || s_mutex == NULL) {
-        ESP_LOGW(TAG, "not initialized");
+        if (one_shot(&s_warned_no_init)) {
+            ESP_LOGW(TAG, "not initialized");
+        }
         return ESP_ERR_INVALID_STATE;
     }
     cb_rgb_math_dim(&r, &g, &b);
 
     if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
-        log_busy_once();
+        if (rate_limited(&s_last_busy_log)) {
+            ESP_LOGW(TAG, "busy: refresh in progress");
+        }
         return ESP_ERR_TIMEOUT;
     }
     err = led_strip_set_pixel(s_strip, 0, r, g, b);
@@ -108,7 +138,9 @@ esp_err_t cb_rgb_set(uint8_t r, uint8_t g, uint8_t b)
     xSemaphoreGive(s_mutex);
 
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "set failed: %s", esp_err_to_name(err));
+        if (rate_limited(&s_last_set_fail_log)) {
+            ESP_LOGW(TAG, "set failed: %s", esp_err_to_name(err));
+        }
         return err;
     }
     ESP_LOGI(TAG, "set r=%u g=%u b=%u", (unsigned)r, (unsigned)g, (unsigned)b);

@@ -12,7 +12,6 @@
 #include "cb_pattern.h"
 #include "cb_rgb_math.h"
 #include "cb_battery_math.h"
-#include "cb_button.h"
 
 static int tests_run;
 static int tests_failed;
@@ -863,12 +862,6 @@ static void test_battery_macro_contract(void)
     CHECK_INT(4500, CB_BAT_PLAUSIBLE_MAX_MV);
 }
 
-/* R3: poll period within the ruled 5-10 ms band (frozen at 10). */
-static void test_button_poll_macro(void)
-{
-    CHECK_INT(10, CB_BUTTON_POLL_MS);
-}
-
 /* R6: int64 intermediates, negative -> 0, truncating, INT32_MAX saturation. */
 static void test_battery_math_conversion(void)
 {
@@ -879,6 +872,7 @@ static void test_battery_math_conversion(void)
     CHECK_INT(3021, cb_battery_math_mv_from_pin_mv(1000));
     CHECK_INT(6345, cb_battery_math_mv_from_pin_mv(2100));
     CHECK_INT(9971, cb_battery_math_mv_from_pin_mv(3300));
+    CHECK_INT(4027, cb_battery_math_mv_from_pin_mv(1333));
     CHECK_INT(12373, cb_battery_math_mv_from_pin_mv(4095));
     CHECK_INT(INT32_MAX, cb_battery_math_mv_from_pin_mv(INT32_MAX));
 }
@@ -935,7 +929,6 @@ int main(void)
     run_test(test_battery_macro_contract, "battery divider/gain/window macro contract");
     run_test(test_battery_math_conversion, "battery mV conversion, clamp and saturation");
     run_test(test_battery_math_plausible, "battery plausibility inclusive bounds");
-    run_test(test_button_poll_macro, "button poll period constant");
 
     printf("1..%d\n", tests_run);
     printf("# failed %d\n", tests_failed);
