@@ -1,9 +1,9 @@
 # Troubleshooting & known pitfalls
 
-> Status: build-verified (item 1, 2026-11-08); measured facts from the vendor demo's failed
-> IDF-6.1 build, the verified skeleton, and this machine's toolchain — per the rule that docs cite measured evidence,
-> not wiki prose. Symptoms marked *(hardware)* can only be confirmed on the board — see
-> [verification.md](verification.md).
+> Status: item 1/2 build-verified, with item-2 boot/display serial evidence from 2026-11-23;
+> item-3 implementation guidance is frozen but its build/flash results are pending. Measured facts
+> come from the vendor demo, this toolchain and dated serial captures, not wiki prose. Symptoms
+> marked *(hardware)* can only be confirmed on the board — see [verification.md](verification.md).
 
 ## Why the vendor demo does not build on IDF v6.1 (measured)
 
@@ -94,10 +94,12 @@ to make these visible at a glance on hardware day.
 - **Firmware runs but console is silent**: console not on USB-Serial/JTAG — IDF needs
   `CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y` (board defaults), Arduino needs `CDCOnBoot=cdc` +
   `USBMode=hwcdc` (locked FQBN). UART0 is not broken out.
-- **Early boot lines never appear** (banner / bootloader / WARN right after reset): the native USB
-  peripheral re-enumerates and the host re-attaches ~1 s late — inherent to USB-Serial/JTAG
-  (measured 2026-11-08). Watch for the root app's one-shot `boot summary:` line on the first
-  heartbeat instead; a raw `cat /dev/ttyACM0` shows the same stream.
+- **Early boot lines are missing** (banner / bootloader / WARN right after reset): native USB
+  re-enumeration means they **may** be lost depending on host re-attachment timing; they are not
+  categorically suppressed. On 2026-11-23 the monitor captured the `I (683)` banner and
+  `W (684…)` warnings. The reliable observation remains the root app's one-shot `boot summary:`
+  on its first heartbeat. Item-3 examples print ready immediately (no artificial delay), so use
+  their repeating cycle/sample/alive lines if the initial ready line was missed.
 - **`./cb monitor` silent while `cat /dev/ttyACM0` streams**: fixed in the item-1 fix round —
   monitor is a live pass-through now; make sure stdin is a terminal (it warns otherwise, Ctrl-]
   may not reach it).
@@ -141,6 +143,33 @@ to make these visible at a glance on hardware day.
   (per-agent `-DSDKCONFIG` + repo `flock` at `<build_root>/.cb.lock`).
 - Never delete/edit another agent's `build/<name>/` tree; use your own `CB_BUILD_ROOT`.
 - Disk: each LVGL build dir is a few hundred MB — `./cb clean` when idle.
+
+## Item-3 RGB, button and battery
+
+- **RGB builds but the GRB field is wrong**: use the pinned led_strip 3.1.1 configuration field
+  `.color_component_format=LED_STRIP_COLOR_COMPONENT_FMT_GRB`. Init must clear the pixel through
+  set+refresh and logs `I cb_rgb: rmt up gpio38, cap 20%`. Set/off are mutexed with a 100 ms
+  acquisition timeout; timeout logs are limited to one per second. Serial success does not prove
+  visible colour or brightness through the acrylic.
+- **Dim output does not match the logged colour**: `cb_rgb_math_dim` is an idempotent peak cap, not
+  uniform scaling. Peak≤51 is unchanged; above it all channels scale by 51/peak with floor. If an
+  application pre-dims for logging, the driver must produce the same values on its second call.
+- **Button events never arrive or callbacks wedge the system**: GPIO0 must be input+pull-up only,
+  with a 10 ms esp_timer. Registration always stores the pair and returns `ESP_OK`, even if the
+  poller failed, so it is not a health check. The pair is replaced inside a critical section and
+  called outside it in esp_timer task context; move blocking work to the app task. Physical gesture
+  timing still needs a human press.
+- **Battery calibration unavailable**: ESP32-S3 uses curve fitting only, including the channel in
+  `adc_cali_curve_fitting_config_t`. Creation failure should WARN once and use
+  `cb_math_adc_raw_to_mv()` rather than fail the optional part.
+- **No-cell warning appears once, or a no-cell input looks plausible**: the 2500–4500 mV band is a
+  heuristic, not presence detection. The driver logs
+  `W cb_battery: implausible %ld mV (no cell inserted?)` only on transition to implausible and
+  `I cb_battery: reading plausible again` on recovery. It deliberately prints no per-read data line;
+  use the `03_battery` example's periodic sample for numbers. Multimeter accuracy remains human.
+- **Root heartbeat lacks item-3 fields**: this is intentional. Item 3 leaves `main/` unchanged — no
+  `bat=`/`rgb=` heartbeat keys and no root button handler. Check `cb_bsp=0.2.0` in the existing boot
+  summary, but remember that `init(CB_PART_ALL)=ESP_OK` still suppresses optional-part failures.
 
 ## Arduino path
 

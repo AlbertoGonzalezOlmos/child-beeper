@@ -81,6 +81,13 @@ Steps run in a **fixed order** with **stable ids**; each prints `[PASS]/[FAIL]/[
    `cb_math` (duty clamp, LE decode, scale math, ADC conversion), `cb_button_fsm` (single click,
    double click, long press, bounce, injected time) and — from item 2 — `cb_pattern`
    (exact-pixel palette, bar boundaries, ramp endpoints, 2×2 corner markers, stride/OOB guards).
+   Item 3 adds `cb_rgb_math` and `cb_battery_math` plus these exact test groups:
+   `test_rgb_dim_cap_macro` (20%), `test_rgb_math_dim` (NULL, low values unchanged, peak cap,
+   truncation and idempotence), `test_button_poll_macro` (10 ms),
+   `test_battery_macro_contract` (divider/gain and 2500/4500 mV bounds),
+   `test_battery_math_conversion` (negative→0, 695→2100, 1000→3021, 4095→12373 and overflow
+   coverage), and `test_battery_math_plausible` (2499 false, inclusive 2500/4500, 4501 false).
+   These tests bind the pure module contracts; no IDF peripheral driver source is host-compiled.
 3. `cli-tests` — the CLI's own unit tests:
    `python3 -m unittest discover -s tools/tests -t . -q` (a missing `tools/tests/` is a FAIL,
    owner deepseek-flash).
@@ -91,9 +98,12 @@ Steps run in a **fixed order** with **stable ids**; each prints `[PASS]/[FAIL]/[
    **esp_lvgl_port 2.9.0**, **led_strip 3.1.1**, **idf 6.1.0**, and
    `components/cb_bsp/idf_component.yml` must pin those three exactly (no `^`/`~`/`>=` ranges).
    A missing/stale lock FAILs with a `./cb deps` hint — run `./cb deps` once after any
-   manifest/lock change (ruling A9).
+   manifest/lock change (ruling A9). Item 3 has four project locks: root, `01_lcd_hello`,
+   `02_rgb_button`, and `03_battery`. The two new locks are committed by the example owner after
+   each first successful build; dependency versions themselves do not change.
 7. `build:app` — builds the root app (`main/` "hello beeper").
-8. `build:<example>` — one step per `examples/*` (currently `build:01_lcd_hello`).
+8. `build:<example>` — one step per `examples/*`. Item 3 adds required steps
+   `build:02_rgb_button` and `build:03_battery` after `build:01_lcd_hello`.
 9. `sdkconfig-assert` — per built target: OCT PSRAM, PSRAM 80 M, 16 MB flash, USB-Serial/JTAG
    console, custom partition table; plus the built partition binary exists and the table contains
    `factory,app,factory,0x10000,3M` and `storage,data,fat,0x310000,0x800000`.
@@ -102,9 +112,11 @@ Steps run in a **fixed order** with **stable ids**; each prints `[PASS]/[FAIL]/[
    `CONFIG_LV_COLOR_DEPTH_16=y`, `CONFIG_LV_COLOR_DEPTH=16`, `CONFIG_LV_OS_NONE=y`,
    `CONFIG_LV_FONT_DEFAULT_MONTSERRAT_14=y`, `CONFIG_LV_FONT_MONTSERRAT_14=y`,
    `CONFIG_LV_USE_LABEL=y`, `CONFIG_LV_USE_IMAGE=y`; and **forbids** `CONFIG_LV_CONF_MINIMAL=y`.
-   Absence of any `CONFIG_LV_` config in those two targets is a **FAIL, not a skip**.
-   (`CONFIG_LV_OS_NONE=y` is deliberate: esp_lvgl_port owns the LVGL task; demanding an
-   `LV_OS_FREERTOS`-style setting would fail a correct build.)
+   Absence of any `CONFIG_LV_` config in those two targets is a **FAIL, not a skip**. For every
+   other target, including 02/03, the same eight keys are checked **whenever any `CONFIG_LV_*`
+   entry is present**; cb_bsp's manifest normally makes them present even though those examples
+   do not call LVGL. (`CONFIG_LV_OS_NONE=y` is deliberate: esp_lvgl_port owns the LVGL task;
+   demanding an `LV_OS_FREERTOS`-style setting would fail a correct build.)
 10. `arduino:<sketch>` — while `arduino/` is absent a single **synthetic step id `arduino:*`** is
     emitted as SKIP instead of per-sketch steps.
 11. `guards-no-board` — runs `./cb flash` / `./cb monitor` with `CB_FORCE_NO_PORTS=1`; both must
@@ -113,15 +125,21 @@ Steps run in a **fixed order** with **stable ids**; each prints `[PASS]/[FAIL]/[
     durations, app sizes via `idf.py size --format json` when it succeeds, `.bin`-size fallback
     otherwise). `./cb report` prints the markdown.
 
-**Item-1 strictness (ruled):** `tests/host/Makefile`, `build:app` and `build:01_lcd_hello` are
-*required* — missing files make those steps **FAIL**, not SKIP. SKIP is legitimate only for
-`pin-drift`, `arduino:*` (no `arduino/` tree yet) and `--offline` sub-checks when `unshare` is
-unavailable.
+**Item-1 strictness + item-3 R9b:** `tests/host/Makefile`, `build:app`,
+`build:01_lcd_hello`, `build:02_rgb_button`, and `build:03_battery` are *required* — missing
+files make those steps **FAIL**, not SKIP, even in `--fast` mode. SKIP is legitimate only for
+`pin-drift`, `arduino:*` (no `arduino/` tree yet), builds deliberately skipped by `--fast`, and
+`--offline` sub-checks when `unshare` is unavailable. With all item-3 projects present, a normal
+full gate still has the two expected Arduino-related SKIPs; sdkconfig-assert covers **four**
+targets (app + three examples).
 
 **Exit codes:** a FAIL in `doctor` → **3**; any other FAIL → **1**; all PASS/SKIP → **0**.
 (Globally: 0 ok, 1 build/test failure, 2 board/port absent, 3 usage/environment.)
 
-**`--fast`** skips every build step (same ids, marked SKIP) — useful while other slices are landing.
+**`--fast`** skips every present build step (same ids, marked SKIP) — useful while other slices
+are landing. A missing required project is still a FAIL under the strictness rule above. During
+shared item-3 implementation, slice agents use this fast gate and targeted builds only; the
+coordinator owns the final full gate.
 
 **`--offline`** re-runs the builds inside `unshare -rn` (network-less namespace) where available and
 forbids fetch commands; if `unshare` is unavailable the build steps report SKIP with explicit
@@ -204,9 +222,42 @@ Procedure per line: run the command, compare with "expected", tick and fill in d
         on at 100 % (A2 bring-up hook);
       - sustained frames show no tearing/corruption (internal-DMA draw buffers + PSRAM canvas;
         flags `buff_dma=true`/`buff_spiram=false`, see [api.md](api.md)).
-- [ ] 7. (item 3+) Battery reading within ±5 % of a multimeter; RGB visible but dim-capped;
-      button: CLICK arrives ~350 ms after release, a double click yields RELEASE then DOUBLE_CLICK,
-      hold ≥800 ms yields LONG_PRESS once and no click on release.
+- [ ] 7. (item 3) **RGB, BOOT button and battery** — serial sub-checks below remain PENDING until
+      the coordinator flashes and records them; human checks remain explicitly separate.
+      - [ ] **RGB init + cycle (serial)** — `./cb flash --target 02_rgb_button`; grep
+        `I cb_rgb: rmt up gpio38, cap 20%` and
+        `rgb_button: ready poll_ms=10 cap_percent=20`. Ready is printed immediately after init
+        (no artificial delay). The announced five-step post-dim cycle must be:
+        `rgb_button: cycle 1 r=51 g=0 b=0`,
+        `rgb_button: cycle 2 r=0 g=51 b=0`,
+        `rgb_button: cycle 3 r=0 g=0 b=51`,
+        `rgb_button: cycle 4 r=51 g=51 b=51`, and
+        `rgb_button: cycle 5 r=0 g=0 b=0`. Also grep `rgb_button: alive #1` (alive format is
+        `rgb_button: alive #%u`, every 5 s). `W rgb_button: cycle %u failed: %s` on any required
+        step is a failure. These lines prove the RMT transactions, not visible light/colour.
+      - [ ] **RGB appearance (human)** — visible but dim-capped, expected GRB colours and no
+        brownout. **PENDING (needs human eyes)**; no uncapped diagnostic bypass exists.
+      - [ ] **Button wrapper (build/serial)** — build proves the 10 ms `CB_BUTTON_POLL_MS`
+        contract; `rgb_button: event PRESS`, `RELEASE`, `CLICK`, `DOUBLE_CLICK`, and
+        `LONG_PRESS` are the frozen event strings if a human presses BOOT. CLICK arrives about
+        350 ms after release, a double yields RELEASE then DOUBLE_CLICK, and hold ≥800 ms yields
+        LONG_PRESS once with no click on release. **Gesture verification PENDING (needs human)**;
+        callback registration returning `ESP_OK` is not a poller-health check.
+      - [ ] **Battery samples (serial)** — `./cb flash --target 03_battery`; expect
+        `battery: ready`, then repeating
+        `battery: raw=%d pin_mv=%ld battery_mv=%ld calibrated=%d plausible=%d` every 2 s. Capture
+        at least two lines and record all values, including which calibration value (0 or 1) ran.
+        `battery: alive #%u` is the degraded-heartbeat form. The driver emits no per-read data
+        line. On transition to implausible it must emit exactly
+        `W cb_battery: implausible %ld mV (no cell inserted?)`; recovery emits
+        `I cb_battery: reading plausible again`. A stable state must not repeat those messages.
+      - [ ] **Battery accuracy (human + meter)** — compare with a multimeter within ±5 % and
+        record both numbers. **PENDING**; a plausible serial sample or successful eFuse
+        calibration is not accuracy evidence.
+      - [ ] **Root R8/regression (serial)** — flash `app` and grep the contiguous
+        `cb_bsp=0.2.0 init(CB_PART_ALL)=ESP_OK`, plus continuing `hello_beeper: alive #N` and no
+        WDT/brownout. Root remains unchanged: no `bat=`/`rgb=` heartbeat keys and no root button
+        handler. This boot-summary check does not prove optional RGB/button/battery health.
 - [ ] 8. (item 4+) IMU: log shows which address answered the probe (**0x6A or 0x6B**), WHO_AM_I
       0x05, ≈1 g on the resting axis, gyro ≈0.
 - [ ] 9. (item 5+) SD: mount logs the bus width used (4-bit, or 1-bit fallback); write/read

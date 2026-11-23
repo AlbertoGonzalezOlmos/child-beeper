@@ -1,10 +1,11 @@
 # Hardware reference — Waveshare ESP32-S3-LCD-1.47B
 
-> Status (updated for item 2): chip identity, flash size, PSRAM presence, console and app boot are
-> **hardware-verified** (item 1, see below); the display stack (LCD/backlight/LVGL) is
-> **build-verified (item 2), hardware pending** the orchestrator's flash; every other peripheral
-> behaviour stays build-verified only until [verification.md](verification.md) ticks it.
-> Pin values mirror the frozen header `components/cb_bsp/include/cb_pins.h`.
+> Status (updated for item 3): chip identity, flash size, PSRAM presence, console and app boot are
+> **hardware-verified**. LCD/LVGL init, the first-frame backlight hook and 12 diagnostic frames were
+> also serial-observed on 2026-11-23; display visuals remain PENDING (needs human). Item-3 RGB,
+> button and battery behaviour below is the frozen implementation contract, not yet a hardware
+> claim. Pin values mirror `components/cb_bsp/include/cb_pins.h`; evidence lives in
+> [verification.md](verification.md).
 
 ## Board / SoC
 
@@ -65,7 +66,17 @@ Other frozen constants: `CB_LCD_SPI_HOST 1` (= `SPI2_HOST`; the skeleton-verifie
   The backlight may **flicker briefly at boot** regardless of software; the BSP starts the PWM at
   duty 0 (item 2) to keep the flash-on-boot as short as possible.
 
-## LCD (ST7789, 172×320) — bring-up facts (item 2, build-verified)
+## BOOT button wrapper (item 3)
+
+- GPIO0 remains an active-low input with pull-up, never a software-driven output. The BSP polls it
+  every **10 ms** from one esp_timer and feeds the existing `cb_button_fsm`; debounce 20 ms, deferred
+  click gap 350 ms and long press 800 ms are not reimplemented in the wrapper.
+- Callback registration always stores the callback/user pair and returns `ESP_OK`, before or after
+  init and even if the poller failed. Pair replacement is protected by a critical section, while the
+  callback runs outside it in esp_timer task context. Callbacks must be short and queue blocking
+  work. Physical gestures and recovery-button operation remain human checklist items.
+
+## LCD (ST7789, 172×320) — bring-up facts (item 2; serial init/render observed 2026-11-23)
 
 - The ST7789 GRAM is 240 px wide; this panel is 172 px → the driver must call
   `esp_lcd_panel_set_gap(panel, 34, 0)` (`CB_LCD_X_GAP 34`, `CB_LCD_Y_GAP 0`). Without the gap the
@@ -103,13 +114,22 @@ Other frozen constants: `CB_LCD_SPI_HOST 1` (= `SPI2_HOST`; the skeleton-verifie
 
 ## Battery sense
 
-- GPIO1 = **ADC1** channel 0 (`CB_BAT_ADC_UNIT 0` = `ADC_UNIT_1`), 12 dB attenuation, oneshot +
-  eFuse calibration when available (item 3).
-- Conversion (frozen, applied by the **battery driver**, never inside `cb_math`):
-  `V = cali_mv × CB_BAT_DIVIDER_NUM/CB_BAT_DIVIDER_DEN × CB_BAT_CAL_GAIN_NUM/CB_BAT_CAL_GAIN_DEN / 1000`
-  i.e. `×3` divider and `×700/695` gain (the vendor's "divide by 0.992857"). No fuel gauge exists —
-  voltage only; percentages are deferred until hardware calibration.
-- Without a cell inserted (USB-only), the reading can be implausible — the driver WARNs (item 3).
+- GPIO1 = **ADC1** channel 0 (`CB_BAT_ADC_UNIT 0` = `ADC_UNIT_1`), 12 dB attenuation, 12-bit
+  oneshot, `ADC_DIGI_CLK_SRC_DEFAULT` and `ADC_ULP_MODE_DISABLE`. Static assertions bind the frozen
+  macros to `ADC_UNIT_1` and `ADC_CHANNEL_0`.
+- ESP32-S3 eFuse calibration uses `adc_cali_curve_fitting_config_t` (including the channel) and
+  `adc_cali_create_scheme_curve_fitting()`. If calibration creation fails, the driver logs one WARN
+  and keeps the ADC running through `cb_math_adc_raw_to_mv()`; it does not fail the optional part.
+- Conversion (frozen, applied by the **battery driver/math module**, never inside `cb_math`):
+  `V = pin_mv × CB_BAT_DIVIDER_NUM/CB_BAT_DIVIDER_DEN × CB_BAT_CAL_GAIN_NUM/CB_BAT_CAL_GAIN_DEN / 1000`.
+  The integer-mV helper returns `pin_mv × 3 × 700 / 695` with an int64 intermediate and no `/1000`;
+  negative input returns 0 and 4095 mV at the pin produces 12373 mV at the battery node. A
+  `cb_battery_sample_t` reports raw, pin_mv, battery_mv, calibrated and plausible together.
+- The inclusive **2500–4500 mV** plausibility window is only a heuristic. On transition to
+  implausible the driver logs `W cb_battery: implausible %ld mV (no cell inserted?)`; recovery logs
+  `I cb_battery: reading plausible again`. It emits no per-read data line and stable polling cannot
+  repeat the warning. A floating no-cell input may still land inside the plausible band. There is
+  no fuel gauge or percentage API; ±5% voltage accuracy requires a human multimeter measurement.
 
 ## TF card (SDMMC)
 
@@ -124,7 +144,15 @@ Other frozen constants: `CB_LCD_SPI_HOST 1` (= `SPI2_HOST`; the skeleton-verifie
 ## RGB LED
 
 - Single WS2812-compatible pixel on GPIO38, GRB order, driven by `espressif/led_strip` 3.1.1
-  (RMT backend, 10 MHz). The LED sits behind acrylic → brightness is capped low (item 3).
+  with `.color_component_format=LED_STRIP_COLOR_COMPONENT_FMT_GRB`, `RMT_CLK_SRC_DEFAULT`, and a
+  10 MHz RMT resolution. Init clears the pixel through set+refresh and logs
+  `I cb_rgb: rmt up gpio38, cap 20%`.
+- The pure cap is **20% of full scale, peak 51**: values whose peak is at most 51 are unchanged;
+  above that, every channel is multiplied by 51/peak with floor. This preserves hue and is
+  idempotent; it is not independent per-channel clipping or uniform scaling of already-dim values.
+- Set and refresh are one mutex-protected transaction with a 100 ms acquisition timeout. A timeout
+  returns `ESP_ERR_TIMEOUT` and logs at most once per second. The LED sits behind acrylic, so actual
+  colour/brightness/brownout behaviour still needs human/hardware observation.
 
 ## USB / power
 
