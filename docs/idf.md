@@ -1,8 +1,9 @@
 # ESP-IDF path — environment, `./cb`, and raw `idf.py`
 
-> Status: item 1/2 build-verified; item-2 boot/display serial evidence recorded 2026-11-23.
-> Item-3 interfaces and build instructions are frozen; the coordinator's full gate and item-3 flash
-> evidence remain pending. Proof levels: [verification.md](verification.md).
+> Status: item 3 build-verified (12 pass, 0 fail, 2 skip on 2026-11-23). Serial evidence covers
+> the item-2 display and item-3 `cb_bsp=0.2.0`, RGB cap, button poller and calibrated battery
+> samples. Round-2 fixes are in review; visual/gesture/multimeter checks remain pending. Proof
+> levels: [verification.md](verification.md).
 
 ## Toolchain (pinned)
 

@@ -1,9 +1,10 @@
 # Troubleshooting & known pitfalls
 
-> Status: item 1/2 build-verified, with item-2 boot/display serial evidence from 2026-11-23;
-> item-3 implementation guidance is frozen but its build/flash results are pending. Measured facts
-> come from the vendor demo, this toolchain and dated serial captures, not wiki prose. Symptoms
-> marked *(hardware)* can only be confirmed on the board — see [verification.md](verification.md).
+> Status: item 3 build-verified (12 pass, 0 fail, 2 skip on 2026-11-23), with item-2 display and
+> item-3 `cb_bsp=0.2.0`, RGB cap, button-poller and calibrated-battery serial evidence. Round-2
+> fixes are in review; visual/gesture/multimeter checks remain pending. Measured facts come from
+> the vendor demo, this toolchain and dated serial captures, not wiki prose. Symptoms marked
+> *(hardware)* can only be confirmed on the board — see [verification.md](verification.md).
 
 ## Why the vendor demo does not build on IDF v6.1 (measured)
 
@@ -154,6 +155,9 @@ to make these visible at a glance on hardware day.
 - **Dim output does not match the logged colour**: `cb_rgb_math_dim` is an idempotent peak cap, not
   uniform scaling. Peak≤51 is unchanged; above it all channels scale by 51/peak with floor. If an
   application pre-dims for logging, the driver must produce the same values on its second call.
+  `W rgb_button: cycle %u failed: %s` is emitted only on the first failure of a failure streak;
+  the next successful cycle clears the gate. Other repeated driver WARNs are one-shot or ≤1 Hz
+  with race-free log state (R14b).
 - **Button events never arrive or callbacks wedge the system**: GPIO0 must be input+pull-up only,
   with a 10 ms esp_timer. Registration always stores the pair and returns `ESP_OK`, even if the
   poller failed, so it is not a health check. The pair is replaced inside a critical section and
@@ -166,7 +170,9 @@ to make these visible at a glance on hardware day.
   heuristic, not presence detection. The driver logs
   `W cb_battery: implausible %ld mV (no cell inserted?)` only on transition to implausible and
   `I cb_battery: reading plausible again` on recovery. It deliberately prints no per-read data line;
-  use the `03_battery` example's periodic sample for numbers. Multimeter accuracy remains human.
+  use the `03_battery` example's periodic sample for numbers. On a read error the example emits
+  `W battery: read failed: %s` once (R13b), then stops polling while `battery: alive #%u`
+  continues every 5 s. Multimeter accuracy and physical cell presence remain human checks.
 - **Root heartbeat lacks item-3 fields**: this is intentional. Item 3 leaves `main/` unchanged — no
   `bat=`/`rgb=` heartbeat keys and no root button handler. Check `cb_bsp=0.2.0` in the existing boot
   summary, but remember that `init(CB_PART_ALL)=ESP_OK` still suppresses optional-part failures.

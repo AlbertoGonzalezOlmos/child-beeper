@@ -1,9 +1,9 @@
 # Verification — what is proven, how, and what still needs the board
 
-> Status (updated 2026-11-23, board attached): the toolkit is build-verified **and** flash,
-> console, an 11-minute soak, the item-2 boot summary and the display's serial diagnostic are
-> **hardware-verified**. Display visuals and all remaining peripherals still need their listed
-> evidence. See "Hardware status" below and the checklist at the bottom.
+> Status (updated 2026-11-23, board attached): item 3 is **build-verified** (12 pass, 0 fail,
+> 2 skip). The item-2 boot/display serial checks and item-3 `cb_bsp=0.2.0`, RGB cap, button-poller
+> and calibrated-battery serial checks are **hardware-verified**. Display/LED visuals, button
+> gestures and multimeter accuracy remain PENDING (needs human). Details and dates follow.
 
 This repo distinguishes two levels of proof, and every doc/report must say which one applies:
 
@@ -44,11 +44,26 @@ Rule (also in `AGENTS.md`): *never claim hardware-verified without a board.*
   **hardware-PENDING (needs human)**.
 - **Attached-board fast gate (2026-11-23)**: `CB_BUILD_ROOT=build/coordinator ./cb verify --fast`
   completed with **7 pass, 0 fail, 5 skip**, including 106 CLI tests.
-- **Item-3 agent-side checks (2026-11-23; not the final coordinator gate)**: with
+- **Item-3 full coordinator gate (2026-11-23, `c6447a6`)**: `CB_BUILD_ROOT=build/coordinator ./cb verify`
+  completed **12 pass, 0 fail, 2 skip** in 707.7 s. App and all three examples built; sdkconfig-assert
+  passed all four targets; 109 CLI tests passed; the two SKIPs are the still-absent Arduino tree and
+  sketches. The coordinator's round-2 full re-run after the review fixes is **PENDING**.
+- **Item-3 serial session (2026-11-23)**: the root app printed
+  `boot summary: reset=USB cb_bsp=0.2.0 init(CB_PART_ALL)=ESP_OK idf=v6.1 heap int=199763B/163332B psram=8269032B`
+  and continued through `alive #7`; only I2C/IMU/SD still log `not implemented`. `02_rgb_button`
+  printed the exact init/poller/ready lines and all five capped cycle values, continuing through
+  `cycle 9` and `alive #3`. `03_battery` printed `cb_battery: adc up, cali curve` and stable
+  `calibrated=1 plausible=1` samples. Exact quoted lines are in checklist 7 below. LED visuals,
+  button gestures, multimeter accuracy and physical cell presence remain **PENDING (needs human)**.
+- **Item-3 round-1 agent-side checks (2026-11-23; supplementary, not the full gate)**: with
   `CB_BUILD_ROOT=build/kimi-k31-pro`, `./cb test` passed all **39** host tests (`# failed 0`),
   `./cb verify --fast` completed **7 pass, 0 fail, 7 skip** (109 CLI tests), and
-  `./cb build app 02_rgb_button 03_battery` passed all three targeted builds. These are build/test
-  results only: the full coordinator `./cb verify` and all item-3 serial checks remain **PENDING**.
+  `./cb build app 02_rgb_button 03_battery` passed all three targeted builds.
+- **Item-3 round-2 agent-side checks (2026-11-23; after the R13b/R14b/R11b fixes)**: `./cb test`
+  passed all **38** host tests (`# failed 0`; the IDF-header button-poll test and stub were removed),
+  `python3 -m unittest discover -s tools/tests -t . -q` passed **109** tests, `./cb verify --fast`
+  completed **7 pass, 0 fail, 7 skip**, and `./cb build app 02_rgb_button 03_battery` passed all
+  three targets. The coordinator's full round-2 gate is still required.
 
 **hardware-UNAVAILABLE (with reasons)**
 - **Early boot lines may be unobservable** on the USB-Serial/JTAG console: after a reset the native
@@ -88,11 +103,12 @@ Steps run in a **fixed order** with **stable ids**; each prints `[PASS]/[FAIL]/[
    (exact-pixel palette, bar boundaries, ramp endpoints, 2×2 corner markers, stride/OOB guards).
    Item 3 adds `cb_rgb_math` and `cb_battery_math` plus these exact test groups:
    `test_rgb_dim_cap_macro` (20%), `test_rgb_math_dim` (NULL, low values unchanged, peak cap,
-   truncation and idempotence), `test_button_poll_macro` (10 ms),
-   `test_battery_macro_contract` (divider/gain and 2500/4500 mV bounds),
-   `test_battery_math_conversion` (negative→0, 695→2100, 1000→3021, 4095→12373 and overflow
-   coverage), and `test_battery_math_plausible` (2499 false, inclusive 2500/4500, 4501 false).
-   These tests bind the pure module contracts; no IDF peripheral driver source is host-compiled.
+   truncation and idempotence), `test_battery_macro_contract` (divider/gain and 2500/4500 mV bounds),
+   `test_battery_math_conversion` (negative→0, 695→2100, 1000→3021, **1333→4027**, 4095→12373
+   and INT32_MAX saturation), and `test_battery_math_plausible` (2499 false, inclusive 2500/4500,
+   4501 false). The R11b amendment removed the IDF `esp_err.h` stub and the button-poll macro's
+   IDF-header test; constants are asserted through pure headers only. No IDF peripheral driver
+   source is host-compiled.
 3. `cli-tests` — the CLI's own unit tests:
    `python3 -m unittest discover -s tools/tests -t . -q` (a missing `tools/tests/` is a FAIL,
    owner deepseek-flash).
@@ -204,6 +220,10 @@ Procedure per line: run the command, compare with "expected", tick and fill in d
       `heap int=206355B/169924B psram=8269144B`. This matches A6 (strict LCD/LVGL parts
       implemented; six optional parts still WARN `not implemented`). Item 3 must be re-observed
       with `cb_bsp=0.2.0`; the 2026-11-23 0.1.0 record is historical evidence, not item-3 proof.
+      **Item-3 root PASS, also 2026-11-23**: the current branch printed
+      `boot summary: reset=USB cb_bsp=0.2.0 init(CB_PART_ALL)=ESP_OK idf=v6.1 heap int=199763B/163332B psram=8269032B`,
+      then `alive #2` through `alive #7` with no reset/WDT. RGB/BUTTON/BATTERY `not implemented`
+      warnings are gone; only I2C/IMU/SD remain.
 - [x] 4. Guard logic with the board attached: `CB_FORCE_NO_PORTS=1 ./cb flash` → exit **2** +
       BOOT/RESET hint — **verified** via `./cb verify` step `guards-no-board`.
 - [ ] 5. Recovery: hold **BOOT**, tap **RESET**, release **BOOT** → download mode; flash succeeds
@@ -227,42 +247,51 @@ Procedure per line: run the command, compare with "expected", tick and fill in d
         on at 100 % (A2 bring-up hook);
       - sustained frames show no tearing/corruption (internal-DMA draw buffers + PSRAM canvas;
         flags `buff_dma=true`/`buff_spiram=false`, see [api.md](api.md)).
-- [ ] 7. (item 3) **RGB, BOOT button and battery** — serial sub-checks below remain PENDING until
-      the coordinator flashes and records them; human checks remain explicitly separate.
-      - [ ] **RGB init + cycle (serial)** — `./cb flash --target 02_rgb_button`; grep
-        `I cb_rgb: rmt up gpio38, cap 20%` and
-        `rgb_button: ready poll_ms=10 cap_percent=20`. Ready is printed immediately after init
-        (no artificial delay). The announced five-step post-dim cycle must be:
+- [ ] 7. (item 3) **RGB, BOOT button and battery** — serial evidence is ticked only for the exact
+      observations quoted below; visuals, gestures and measurements remain separate PENDING items.
+      - [x] **RGB init + five-cycle serial — PASS 2026-11-23**: observed
+        `I (587) cb_rgb: set r=0 g=0 b=0`, then
+        `I (587) cb_rgb: rmt up gpio38, cap 20%` and
+        `I (588) rgb_button: ready poll_ms=10 cap_percent=20`. The full capture contains
         `rgb_button: cycle 1 r=51 g=0 b=0`,
         `rgb_button: cycle 2 r=0 g=51 b=0`,
         `rgb_button: cycle 3 r=0 g=0 b=51`,
         `rgb_button: cycle 4 r=51 g=51 b=51`, and
-        `rgb_button: cycle 5 r=0 g=0 b=0`. Also grep `rgb_button: alive #1` (alive format is
-        `rgb_button: alive #%u`, every 5 s). `W rgb_button: cycle %u failed: %s` on any required
-        step is a failure. These lines prove the RMT transactions, not visible light/colour.
+        `rgb_button: cycle 5 r=0 g=0 b=0`, followed by `alive #2`, `alive #3` and cycles 6–9.
+        This proves the RMT transactions and the numeric 20% cap (255→51), not visible light.
+        `W rgb_button: cycle %u failed: %s` was not observed; after R14b it is emitted only on the
+        first failure of a streak, with the gate cleared by a successful cycle.
       - [ ] **RGB appearance (human)** — visible but dim-capped, expected GRB colours and no
         brownout. **PENDING (needs human eyes)**; no uncapped diagnostic bypass exists.
-      - [ ] **Button wrapper (build/serial)** — build proves the 10 ms `CB_BUTTON_POLL_MS`
-        contract; `rgb_button: event PRESS`, `RELEASE`, `CLICK`, `DOUBLE_CLICK`, and
-        `LONG_PRESS` are the frozen event strings if a human presses BOOT. CLICK arrives about
-        350 ms after release, a double yields RELEASE then DOUBLE_CLICK, and hold ≥800 ms yields
-        LONG_PRESS once with no click on release. **Gesture verification PENDING (needs human)**;
+      - [x] **Button poller serial — PASS 2026-11-23**: observed
+        `I (588) cb_button: poller up, 10 ms`. This proves the poller started, not gesture accuracy.
+      - [ ] **Button gestures (human)** — `rgb_button: event PRESS`, `RELEASE`, `CLICK`,
+        `DOUBLE_CLICK`, and `LONG_PRESS` are the frozen event strings if a human presses BOOT.
+        CLICK arrives about 350 ms after release, a double yields RELEASE then DOUBLE_CLICK, and
+        hold ≥800 ms yields LONG_PRESS once with no click on release. **PENDING (needs human)**;
         callback registration returning `ESP_OK` is not a poller-health check.
-      - [ ] **Battery samples (serial)** — `./cb flash --target 03_battery`; expect
-        `battery: ready`, then repeating
-        `battery: raw=%d pin_mv=%ld battery_mv=%ld calibrated=%d plausible=%d` every 2 s. Capture
-        at least two lines and record all values, including which calibration value (0 or 1) ran.
-        `battery: alive #%u` every 5 s, including degraded operation. The driver emits no per-read data
-        line. On transition to implausible it must emit exactly
-        `W cb_battery: implausible %ld mV (no cell inserted?)`; recovery emits
-        `I cb_battery: reading plausible again`. A stable state must not repeat those messages.
-      - [ ] **Battery accuracy (human + meter)** — compare with a multimeter within ±5 % and
-        record both numbers. **PENDING**; a plausible serial sample or successful eFuse
-        calibration is not accuracy evidence.
-      - [ ] **Root R8/regression (serial)** — flash `app` and grep the contiguous
-        `cb_bsp=0.2.0 init(CB_PART_ALL)=ESP_OK`, plus continuing `hello_beeper: alive #N` and no
-        WDT/brownout. Root remains unchanged: no `bat=`/`rgb=` heartbeat keys and no root button
-        handler. This boot-summary check does not prove optional RGB/button/battery health.
+      - [x] **Battery samples serial — PASS 2026-11-23**: observed
+        `I (587) cb_battery: adc up, cali curve`,
+        `I (587) battery: ready`,
+        `I (587) battery: raw=1638 pin_mv=1397 battery_mv=4221 calibrated=1 plausible=1`,
+        `I (2587) battery: raw=1637 pin_mv=1396 battery_mv=4218 calibrated=1 plausible=1`, and
+        `I (6587) battery: alive #1`. Curve-fitting calibration was used and the reading was stable
+        (±3 mV over 10 s) with no spurious implausible WARN. The driver emits no per-read data
+        line. On transition to implausible its contract is
+        `W cb_battery: implausible %ld mV (no cell inserted?)`; recovery is
+        `I cb_battery: reading plausible again`, both transition-gated. R13b adds one-shot
+        `W battery: read failed: %s`, after which polling stops while `battery: alive #%u`
+        continues every 5 s; that failure path was not injected and remains build/code-verified.
+      - [ ] **Battery accuracy + cell presence (human + meter)** — compare with a multimeter
+        within ±5 % and record both numbers. **PENDING**; a plausible serial sample or successful
+        calibration is not accuracy evidence. 4221 mV is consistent with a charged cell or USB
+        feed, so physical cell presence also remains undetermined.
+      - [x] **Root R8/regression serial — PASS 2026-11-23**: observed
+        `boot summary: reset=USB cb_bsp=0.2.0 init(CB_PART_ALL)=ESP_OK idf=v6.1 heap int=199763B/163332B psram=8269032B`
+        and continuing `hello_beeper: alive #N` through `alive #7` with no WDT/brownout. Root
+        remains unchanged: no `bat=`/`rgb=` heartbeat keys and no root button handler. Only
+        I2C/IMU/SD still log `not implemented`. This boot-summary check does not by itself prove
+        optional RGB/button/battery health; their separate serial lines above are the evidence.
 - [ ] 8. (item 4+) IMU: log shows which address answered the probe (**0x6A or 0x6B**), WHO_AM_I
       0x05, ≈1 g on the resting axis, gyro ≈0.
 - [ ] 9. (item 5+) SD: mount logs the bus width used (4-bit, or 1-bit fallback); write/read

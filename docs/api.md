@@ -1,9 +1,10 @@
 # BSP API reference (items 1–3 — frozen surface)
 
-> Status: item-3 API frozen by R1–R8 and R1b–R12b; item-3 build and hardware evidence are pending
-> the coordinator. Item 2's display init/render serial behaviour was observed on 2026-11-23; its
-> visual checks remain hardware-PENDING. Only the names on this page are frozen; IMU/SD driver APIs
-> still require their own item review rounds. Do not invent `cb_*` names ahead of their item.
+> Status: item-3 API frozen by R1–R8, R1b–R12b and the R13b/R14b review fixes. The 2026-11-23
+> full gate and item-3 serial evidence are recorded in verification.md; the round-2 coordinator
+> re-run is pending. Item-2 display visuals and item-3 visual/gesture/multimeter checks remain
+> hardware-PENDING. Only the names on this page are frozen; IMU/SD driver APIs still require their
+> own item review rounds. Do not invent `cb_*` names ahead of their item.
 
 Component: `components/cb_bsp` (local IDF component). Consumers depend on it by path, e.g.
 `examples/<NN>/main/idf_component.yml`:
@@ -214,7 +215,9 @@ then four **2×2 corner markers** drawn last (TL red `0xF800`, TR yellow `0xFFE0
   panel only); `CB_PART_LVGL` → `cb_lcd_init_lvgl` (strict, adds the LVGL port; requires LCD).
   Order and strict/optional policy unchanged.
 - **From item 2, `cb_bsp_init(CB_PART_ALL)` returns `ESP_OK` on a good board** (A6): the strict
-  parts are implemented; RGB/I2C/IMU/BUTTON/BATTERY/SD still log WARN `not implemented`.
+  parts are implemented. In that historical item-2 state RGB/I2C/IMU/BUTTON/BATTERY/SD still logged
+  WARN `not implemented`; item 3 removes RGB/BUTTON/BATTERY from that list, leaving I2C/IMU/SD for
+  items 4/5.
 - Idempotency (brief ruling 3): a second call logs “already initialized” per part and returns
   `ESP_OK`; failed parts are not marked, so a later call retries them.
 
@@ -255,11 +258,14 @@ esp_err_t cb_rgb_off(void);
 - Init is idempotent. Partial failure releases any acquired device/mutex (`led_strip_del()` and
   `vSemaphoreDelete()`), leaves no initialized state, returns the first error, and permits retry.
 - Set applies `cb_rgb_math_dim` to local channels. `cb_rgb_off()` is exactly `cb_rgb_set(0,0,0)`.
-  Before successful init both return `ESP_ERR_INVALID_STATE`. The mutex covers
-  `led_strip_set_pixel()` + `led_strip_refresh()` and is taken with a **100 ms** timeout; timeout
-  returns `ESP_ERR_TIMEOUT` and logs at most once per second. The first driver error is returned and
-  the mutex is always released. No getter, clear variant, uncapped bypass, or driver handle is
-  public. RGB calls are task-context only and must not be made while holding `cb_lcd_lvgl_lock()`.
+  Before successful init both return `ESP_ERR_INVALID_STATE`; that pre-init WARN is one-shot and is
+  re-armed by a later successful init. The mutex covers `led_strip_set_pixel()` +
+  `led_strip_refresh()` and is taken with a **100 ms** timeout; timeout returns `ESP_ERR_TIMEOUT` and
+  logs at most once per second. Set-failure WARNs are also limited to 1 Hz. Rate-limit and one-shot
+  state is checked/updated inside a critical section, while the log call itself happens outside it.
+  The first driver error is returned and the mutex is always released. No getter, clear variant,
+  uncapped bypass, or driver handle is public. RGB calls are task-context only and must not be made
+  while holding `cb_lcd_lvgl_lock()`.
 
 ### `cb_button.h` — BOOT GPIO wrapper over the frozen FSM
 
@@ -336,14 +342,17 @@ esp_err_t cb_battery_read(cb_battery_sample_t *out);
 - ESP32-S3 calibration uses **curve fitting only**: `adc_cali_curve_fitting_config_t` (including
   `.chan=ADC_CHANNEL_0`) and `adc_cali_create_scheme_curve_fitting()`. Calibration creation failure
   logs one WARN and falls back to `cb_math_adc_raw_to_mv()` without discarding a working ADC.
-- `cb_battery_read(NULL)` returns `ESP_ERR_INVALID_ARG`; pre-init returns `ESP_ERR_INVALID_STATE`.
-  A successful read obtains raw ADC data with `adc_oneshot_read()`, then either
-  `adc_cali_raw_to_voltage()` or the frozen raw fallback, and fills all five fields from that one
-  sample; `out` is untouched on driver error. Reads are serialized by an internal mutex with a
-  100 ms bound (`ESP_ERR_TIMEOUT` on timeout). An implausible result still returns `ESP_OK` with
-  `plausible=false`.
-- The **driver owns plausibility transitions**, not per-read data output. On transition to
-  implausible it logs `W cb_battery: implausible %ld mV (no cell inserted?)`; on recovery it logs
+- `cb_battery_read(NULL)` returns `ESP_ERR_INVALID_ARG`; pre-init returns `ESP_ERR_INVALID_STATE`
+  and emits its pre-init WARN only once (re-armed by successful init). A successful read obtains raw
+  ADC data with `adc_oneshot_read()`, then either `adc_cali_raw_to_voltage()` or the frozen raw
+  fallback, and fills all five fields from that one sample; `out` is untouched on driver error.
+  Reads are serialized by an internal mutex with a 100 ms bound (`ESP_ERR_TIMEOUT` on timeout);
+  the busy WARN is limited to 1 Hz and its last-log state is updated under a critical section. An
+  implausible result still returns `ESP_OK` with `plausible=false`.
+- The **driver owns plausibility transitions**, not per-read data output. The transition decision
+  and `s_warned_implausible` update occur inside the read mutex so concurrent sample state cannot be
+  reordered. On transition to implausible it logs
+  `W cb_battery: implausible %ld mV (no cell inserted?)`; on recovery it logs
   `I cb_battery: reading plausible again`. Stable polling cannot repeat these messages. Examples
   own their own periodic sample lines; the driver prints no per-read data line.
 
@@ -359,7 +368,15 @@ esp_err_t cb_battery_read(cb_battery_sample_t *out);
   `cb_bsp=0.2.0 init(CB_PART_ALL)=ESP_OK` when the strict LCD/LVGL parts succeed; that line is not
   proof of optional RGB/button/battery health.
 - After item 3 only I2C, IMU and SD remain requested-but-not-yet-implemented parts. Every repeated
-  warning path added by item 3 is transition-gated or rate-limited.
+  warning path added by item 3 is one-shot, transition-gated, or rate-limited to **≤1 Hz** (R14b),
+  with race-free last-log state. In particular, the RGB example logs
+  `W rgb_button: cycle %u failed: %s` only on the first failure of a failure streak and clears its
+  error-active flag on the next successful cycle.
+- **R13b battery diagnostic addition:** on a `cb_battery_read` error, `03_battery` emits exactly
+  `W battery: read failed: %s` once, substituting `esp_err_to_name(err)`, then stops polling. Its
+  normal sample line remains `battery: raw=%d pin_mv=%ld battery_mv=%ld calibrated=%d plausible=%d`
+  every 2 s and `battery: alive #%u` continues every 5 s, so a dead ADC is distinguishable from a
+  wedged app. This failure path has not been hardware-injected; it is a code/build contract only.
 
 ## Threading / LVGL rules
 

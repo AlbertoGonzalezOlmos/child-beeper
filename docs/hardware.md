@@ -1,10 +1,10 @@
 # Hardware reference — Waveshare ESP32-S3-LCD-1.47B
 
 > Status (updated for item 3): chip identity, flash size, PSRAM presence, console and app boot are
-> **hardware-verified**. LCD/LVGL init, the first-frame backlight hook and 12 diagnostic frames were
-> also serial-observed on 2026-11-23; display visuals remain PENDING (needs human). Item-3 RGB,
-> button and battery behaviour below is the frozen implementation contract, not yet a hardware
-> claim. Pin values mirror `components/cb_bsp/include/cb_pins.h`; evidence lives in
+> **hardware-verified**. LCD/LVGL init/backlight and 12 frames, the item-3 `cb_bsp=0.2.0` boot
+> summary, RGB cap transactions, the 10 ms button poller and calibrated battery samples were also
+> serial-observed on 2026-11-23. Visual/gesture/multimeter checks remain PENDING (needs human).
+> Pin values mirror `components/cb_bsp/include/cb_pins.h`; measurements live in
 > [verification.md](verification.md).
 
 ## Board / SoC
@@ -75,6 +75,9 @@ Other frozen constants: `CB_LCD_SPI_HOST 1` (= `SPI2_HOST`; the skeleton-verifie
   init and even if the poller failed. Pair replacement is protected by a critical section, while the
   callback runs outside it in esp_timer task context. Callbacks must be short and queue blocking
   work. Physical gestures and recovery-button operation remain human checklist items.
+- **Serial-verified 2026-11-23**: `I (588) cb_button: poller up, 10 ms`. This proves the poller
+  started; no CLICK/DOUBLE_CLICK/LONG_PRESS gesture was observed, so gesture timing remains
+  hardware-PENDING (needs human).
 
 ## LCD (ST7789, 172×320) — bring-up facts (item 2; serial init/render observed 2026-11-23)
 
@@ -130,6 +133,12 @@ Other frozen constants: `CB_LCD_SPI_HOST 1` (= `SPI2_HOST`; the skeleton-verifie
   `I cb_battery: reading plausible again`. It emits no per-read data line and stable polling cannot
   repeat the warning. A floating no-cell input may still land inside the plausible band. There is
   no fuel gauge or percentage API; ±5% voltage accuracy requires a human multimeter measurement.
+- **Serial-verified 2026-11-23**: init printed `cb_battery: adc up, cali curve`, followed by
+  `battery: raw=1638 pin_mv=1397 battery_mv=4221 calibrated=1 plausible=1` and
+  `battery: raw=1637 pin_mv=1396 battery_mv=4218 calibrated=1 plausible=1`. This proves curve-fitting
+  calibration and a stable plausible sample on this silicon, not multimeter accuracy or whether a
+  cell is physically fitted. `W battery: read failed: %s` is the one-shot error contract; polling
+  then stops while `battery: alive #%u` continues.
 
 ## TF card (SDMMC)
 
@@ -151,8 +160,17 @@ Other frozen constants: `CB_LCD_SPI_HOST 1` (= `SPI2_HOST`; the skeleton-verifie
   above that, every channel is multiplied by 51/peak with floor. This preserves hue and is
   idempotent; it is not independent per-channel clipping or uniform scaling of already-dim values.
 - Set and refresh are one mutex-protected transaction with a 100 ms acquisition timeout. A timeout
-  returns `ESP_ERR_TIMEOUT` and logs at most once per second. The LED sits behind acrylic, so actual
-  colour/brightness/brownout behaviour still needs human/hardware observation.
+  returns `ESP_ERR_TIMEOUT` and logs at most once per second. Pre-init errors are one-shot and
+  set failures are rate-limited to 1 Hz; last-log state is updated under a critical section. The
+  LED sits behind acrylic, so actual colour/brightness/brownout behaviour still needs human/hardware
+  observation.
+- **Serial-verified 2026-11-23**: init cleared the pixel and printed
+  `I cb_rgb: rmt up gpio38, cap 20%`; the example then announced all five post-dim steps:
+  `cycle 1 r=51 g=0 b=0`, `cycle 2 r=0 g=51 b=0`, `cycle 3 r=0 g=0 b=51`,
+  `cycle 4 r=51 g=51 b=51`, and `cycle 5 r=0 g=0 b=0`. This proves the numeric 20% cap and RMT
+  transaction sequence, not visible colour/brightness. `W rgb_button: cycle %u failed: %s` is now
+  emitted only on the first failure of a failure streak, with the gate cleared by a successful
+  cycle.
 
 ## USB / power
 
