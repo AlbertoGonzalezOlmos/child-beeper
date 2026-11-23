@@ -25,6 +25,8 @@
 #include "cb_backlight.h"
 #include "cb_battery.h"
 #include "cb_button.h"
+#include "cb_i2c.h"
+#include "cb_imu.h"
 #include "cb_lcd.h"
 #include "cb_rgb.h"
 #include "esp_log.h"
@@ -44,8 +46,8 @@ typedef struct {
 static const cb_part_desc_t k_parts[] = {
     { "BACKLIGHT", CB_PART_BACKLIGHT, false, cb_backlight_init },
     { "RGB",       CB_PART_RGB,       false, cb_rgb_init },
-    { "I2C",       CB_PART_I2C,       false, NULL },
-    { "IMU",       CB_PART_IMU,       false, NULL },
+    { "I2C",       CB_PART_I2C,       false, cb_i2c_init },
+    { "IMU",       CB_PART_IMU,       false, cb_imu_init },
     { "BUTTON",    CB_PART_BUTTON,    false, cb_button_init },
     { "BATTERY",   CB_PART_BATTERY,   false, cb_battery_init },
     { "LCD",       CB_PART_LCD,       true,  cb_lcd_init },

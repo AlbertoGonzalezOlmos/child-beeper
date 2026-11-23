@@ -25,6 +25,7 @@ idf_component_register(
         "src/cb_battery_math.c"
         "src/cb_imu_math.c"
         "src/cb_i2c.c"
+        "src/cb_imu.c"
         "src/cb_rgb.c"
         "src/cb_button.c"
         "src/cb_battery.c"

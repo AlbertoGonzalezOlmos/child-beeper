@@ -24,7 +24,7 @@ extern "C" {
 #endif
 
 #define CB_BSP_VERSION_MAJOR 0
-#define CB_BSP_VERSION_MINOR 2
+#define CB_BSP_VERSION_MINOR 3
 #define CB_BSP_VERSION_PATCH 0
 
 typedef enum {
@@ -44,7 +44,7 @@ typedef enum {
 esp_err_t cb_bsp_init(uint32_t parts);   /* inits only the requested parts, in fixed order:
                                             BACKLIGHT -> RGB -> I2C -> IMU -> BUTTON -> BATTERY
                                             -> LCD -> LVGL -> SD (SD last: mount can block)      */
-const char *cb_bsp_version(void);        /* "0.2.0" (R8: MINOR bumps per item) */
+const char *cb_bsp_version(void);        /* "0.3.0" (R8: MINOR bumps per item) */
 
 #ifdef __cplusplus
 }
