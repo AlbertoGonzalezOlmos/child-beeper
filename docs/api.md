@@ -1,9 +1,10 @@
 # BSP API reference (items 1–4 — frozen surface)
 
-> Status: item-4 API frozen by R9–R13 and R14–R27; item-4 full-gate and hardware evidence are
-> pending the coordinator. Item 3 is build-verified and its RGB/button/battery serial evidence is recorded
-> in verification.md. Only the names on this page are frozen; the SD driver API still requires its
-> own item review round. Do not invent `cb_*` names ahead of their item.
+> Status: item-4 API frozen by R9–R13 and R14–R27, with the measured `a05fded` init fixes below;
+> its full gate remains pending the coordinator. The 2026-11-23 IMU serial capture is recorded in
+> verification.md; motion response and accuracy/bias calibration remain PENDING. Item 3 is
+> build-verified and its RGB/button/battery serial evidence is recorded in verification.md. Only
+> the names on this page are frozen; the SD driver API still requires its own item review round. Do not invent `cb_*` names ahead of their item.
 
 Component: `components/cb_bsp` (local IDF component). Consumers depend on it by path, e.g.
 `examples/<NN>/main/idf_component.yml`:
@@ -133,8 +134,9 @@ Porting rules (vendor bugs explicitly **not** inherited — see
 [troubleshooting.md](troubleshooting.md#vendor-bug-ledger)):
 - Clear mask bits with bitwise complement: `reg &= (uint8_t)~CB_QMI_ALPF_MASK;` — the vendor used
   logical NOT (`!MASK`), which zeroes the whole register.
-- The vendor's CTRL9 host-command path contains an **unbounded** `while(...)` wait; item 1 does not
-  use CTRL9 at all, and any future use must add a timeout.
+- The vendor's CTRL9 host-command path contains an **unbounded** `while(...)` wait. Item 1 did not
+  use CTRL9; item 4 requires the vendor's **0x12 AHB-clock-gating command** but replaces that wait
+  with a bounded 100 ms STATUSINT poll.
 - The driver probes `CB_QMI_ADDR_0 0x6A`, then `CB_QMI_ADDR_1 0x6B` if needed, with
   `i2c_master_probe()` and logs which answered. A WHO_AM_I mismatch logs a WARN and fails optional
   IMU init with `ESP_ERR_INVALID_RESPONSE`; it never aborts the process.
@@ -450,7 +452,7 @@ int cb_imu_addr(void);           /* 0 before full init, otherwise 0x6A or 0x6B *
 uint8_t cb_imu_who_am_i(void);   /* last WHO byte; meaningful when cb_imu_addr() != 0 */
 ```
 
-#### Frozen init/probe/configuration path (R21)
+#### Frozen init/probe/configuration path (R21 + measured `a05fded` amendments)
 
 1. Successful init is idempotent. No bus returns `ESP_ERR_INVALID_STATE`; no second bus is created
    implicitly. Create the one IMU mutex used to serialize WHO/configuration transfers and sample
@@ -467,8 +469,16 @@ uint8_t cb_imu_who_am_i(void);   /* last WHO byte; meaningful when cb_imu_addr()
    Read/config errors remove the device and mutex. Complete success logs
    `cb_imu: up addr=0x%02X who=0x%02X range=8g/512dps odr=%uHz`.
 5. Configure in this exact order, every transfer bounded by `CB_QMI_COMM_TIMEOUT_MS` (50 ms):
-   - **CTRL1**: write `CB_QMI_CTRL1_ADDR_AI` (**0x80**) before any burst. Reset default 0x00 would
-     repeatedly read one register rather than advancing through all 14 bytes.
+   - **CTRL1**: write `CB_QMI_CTRL1_ADDR_AI` (**0x40**, bit 6) before any burst. Reset default 0x00
+     would repeatedly read one register rather than advancing through all 14 bytes. **Measured on
+     this part 2026-11-23** (fixed in `a05fded`): 0x80 repeated the first byte
+     (`burst35=41 41 41 41 41 41`), while 0x40 returned real data (`3F F1 69 03 38 FB`); see
+     [verification.md](verification.md) checklist 8.
+   - **CTRL9 / CH9**: immediately after CTRL1, issue
+     `CB_QMI_CTRL_CMD_AHB_CLOCK_GATING` (**0x12**) and poll STATUSINT bit 7 in 5 ms steps with a
+     **100 ms bound**. This command is **required on the measured part**: without it the output
+     registers returned a moving counter ([verification.md](verification.md) checklist 8). Timeout
+     returns `ESP_ERR_TIMEOUT`; never use the vendor's unbounded wait.
    - **CTRL2**: read-modify-write with `CB_QMI_ASCALE_MASK/OFFSET` and `CB_QMI_AODR_MASK`, then set
      `CB_QMI_ACC_RANGE_8G` and selected ODR. At 120 Hz the range/ODR bits compose to **0x26**;
      bits outside those masks are preserved.
@@ -480,7 +490,9 @@ uint8_t cb_imu_who_am_i(void);   /* last WHO byte; meaningful when cb_imu_addr()
      Never use logical `!MASK`.
    - **CTRL7**: write `CB_QMI_CTRL7_ACC_EN | CB_QMI_CTRL7_GYR_EN` (**0x03**) last, enabling both
      sensors. The only added register macros are `CB_QMI_CTRL1_ADDR_AI`, `CB_QMI_CTRL7_ACC_EN`
-     and `CB_QMI_CTRL7_GYR_EN`. No CTRL9 access is permitted.
+     and `CB_QMI_CTRL7_GYR_EN`.
+   - **Readback**: after a 50 ms settle, read revision, CTRL1, CTRL2, CTRL3, CTRL7 and CTRL9, then
+     emit the permanent one-line boot readback quoted in the serial contract below.
 6. Set addr/WHO only after the whole sequence succeeds. Post-add failures return the originating
    error (or `ESP_ERR_INVALID_RESPONSE` for WHO mismatch), remove the device/mutex and leave
    identity at zero so a later `cb_bsp_init` can retry without stale presence.
@@ -529,7 +541,15 @@ The default is `CONFIG_CB_IMU_ODR_120=y`; the driver maps the three symbols to t
   `src/cb_imu_math.c`. `REQUIRES` is `esp_lcd esp_driver_i2c`; the other private driver
   requirements are unchanged.
 
-### `04_imu` serial contract (R23)
+### `04_imu` serial contract (R23 + measured init diagnostics)
+
+Successful driver init includes these two boot diagnostic lines before `cb_imu: up` and the
+example's `ready` line:
+
+```text
+I cb_imu: ctrl9 cmd 0x%02X done in %d ms
+I cb_imu: readback revision=0x%02X ctrl1=0x%02X ctrl2=0x%02X ctrl3=0x%02X ctrl7=0x%02X ctrl9=0x%02X
+```
 
 Once after successful init:
 

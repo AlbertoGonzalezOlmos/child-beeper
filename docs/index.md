@@ -71,7 +71,7 @@ arduino/                      # item 7: staged CBBoard library + sketches (absen
 | Pins/math/FSM/QMI regs (pure, host-tested) | `cb_pins.h`, `cb_math`, `cb_button_fsm`, `cb_qmi8658_regs` | `tests/host` | item 1 | n/a (logic) |
 | LCD + LVGL 9.5 + backlight + pattern | `cb_lcd`, `cb_backlight`, `cb_pattern` | `01_lcd_hello` diagnostic | item 2 (2026-11-08) | ✓ serial 2026-11-23 (init, backlight hook, 12 frames); visuals PENDING |
 | RGB LED, BOOT button, battery | `cb_rgb`, `cb_button`, `cb_battery` | `02_rgb_button`, `03_battery` | **item 3 build-verified** (round-2 `d7fabd3`: 12 pass, 0 fail, 2 skip, 129.0 s, 2026-11-23) | serial-verified: battery sample, RGB 20 % cap, button poller, boot summary 0.2.0; visual/multimeter/gesture PENDING (needs human) |
-| IMU QMI8658 (new `i2c_master`) | item 4 | `04_imu` | item 4 | ✗ |
+| IMU QMI8658 (new `i2c_master`) | `cb_i2c`, `cb_imu`, `cb_imu_math` | `04_imu` | **item 4 build-verified**; full coordinator gate PENDING | ✓ serial 2026-11-23: 0x6B, WHO 0x05, stable 0.99 g IMU samples; motion response + accuracy/bias calibration PENDING (needs human) |
 | TF card (SDMMC, no auto-format) | item 5 | `05_sdcard` | item 5 | ✗ |
 | Self-test + dashboard | item 6 | `06_dashboard`, `./cb selftest` | item 6 | ✗ |
 | Arduino parity (CBBoard, sketches) | item 7 | `arduino/` | item 7 | ✗ |

@@ -2,8 +2,9 @@
 
 > Status: item 3 build-verified (12 pass, 0 fail, 2 skip on 2026-11-23). Serial evidence covers
 > the item-2 display and item-3 `cb_bsp=0.2.0`, RGB cap, button poller and calibrated battery
-> samples. Item-4 I2C/IMU build instructions are frozen; its coordinator gate and flash evidence
-> are pending. Proof levels: [verification.md](verification.md).
+> samples. Item-4 I2C/IMU build instructions are frozen; its full coordinator gate remains pending,
+> while the 2026-11-23 `04_imu` serial evidence is recorded. Proof levels:
+> [verification.md](verification.md).
 
 ## Toolchain (pinned)
 

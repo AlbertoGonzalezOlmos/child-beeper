@@ -2,9 +2,10 @@
 
 > Status (updated for item 4): item 3 is **build-verified** (12 pass, 0 fail, 2 skip), with
 > item-2 display and item-3 `cb_bsp=0.2.0`, RGB cap, button-poller and calibrated-battery serial
-> checks **hardware-verified**. Item-4's full coordinator gate and all I2C/IMU serial checks are
-> **PENDING**; no item-4 hardware fact is claimed. Display/LED visuals, button gestures, multimeter
-> accuracy and IMU motion/accuracy checks remain PENDING (needs human). Details and dates follow.
+> checks **hardware-verified**. Item-4's `04_imu` serial half is **hardware-verified 2026-11-23**;
+> its full coordinator gate and root 0.3.0 capture remain **PENDING**. Display/LED visuals, button
+> gestures, multimeter accuracy and IMU motion response/accuracy/bias calibration remain PENDING
+> (needs human). Details and dates follow.
 
 This repo distinguishes two levels of proof, and every doc/report must say which one applies:
 
@@ -57,9 +58,12 @@ Rule (also in `AGENTS.md`): *never claim hardware-verified without a board.*
   `cycle 9` and `alive #3`. `03_battery` printed `cb_battery: adc up, cali curve` and stable
   `calibrated=1 plausible=1` samples. Exact quoted lines are in checklist 7 below. LED visuals,
   button gestures, multimeter accuracy and physical cell presence remain **PENDING (needs human)**.
-- **Item-4 gate/serial status**: item-4's required target, pure decode tests and checklist-8
-  acceptance contract are defined below. Its full coordinator gate, `cb_bsp=0.3.0` root summary and
-  04_imu hardware capture are **PENDING**; no item-4 hardware fact is claimed yet.
+- **Item-4 gate/serial status**: the full coordinator gate and `cb_bsp=0.3.0` root summary remain
+  **PENDING**. The 2026-11-23 `04_imu` capture is a **serial-half PASS**: 0x6B answered after 0x6A
+  was silent, WHO_AM_I was 0x05, revision was 0x7C, and stable decoded samples gave 0.99 g magnitude
+  with approximately 31 °C temperature. Hardware also resolved ADDR_AI as **0x40** and established
+  that CTRL9 **0x12** is required; both fixes are in `a05fded`. Exact lines and the still-pending
+  motion/accuracy/bias checks are in checklist 8 below.
 - **Item-3 round-1 agent-side checks (2026-11-23; supplementary, not the full gate)**: with
   `CB_BUILD_ROOT=build/kimi-k31-pro`, `./cb test` passed all **39** host tests (`# failed 0`),
   `./cb verify --fast` completed **7 pass, 0 fail, 7 skip** (109 CLI tests), and
@@ -312,25 +316,46 @@ Procedure per line: run the command, compare with "expected", tick and fill in d
         remains unchanged: no `bat=`/`rgb=` heartbeat keys and no root button handler. Only
         I2C/IMU/SD still log `not implemented`. This boot-summary check does not by itself prove
         optional RGB/button/battery health; their separate serial lines above are the evidence.
-- [ ] 8. (item 4) **I2C/QMI8658 IMU — PENDING: the coordinator has not yet flashed `app`/
-      `04_imu` or supplied a dated serial capture. No item-4 hardware result is claimed.**
-      - [ ] **Bus/probe/init serial** — record `i2c: internal pull-ups enabled`, the probe result
-        at **0x6A** (then **0x6B** only if 0x6A does not answer), and the successful
-        `cb_imu: up addr=0x%02X who=0x%02X range=8g/512dps odr=120Hz` line. Record the winning
-        address and actual WHO byte verbatim; expected WHO is **0x05**. A mismatch is a WARN plus
-        `ESP_ERR_INVALID_RESPONSE`, not a pass. The pull-up log proves the setting, not electrical
-        suitability.
-      - [ ] **Ready/sample/alive serial** — require once
-        `I imu: ready addr=0x%02X who=0x%02X`, then the full
-        `I imu: ax=%+.3f ay=%+.3f az=%+.3f gx=%+.2f gy=%+.2f gz=%+.2f temp_c=%+.2f`
-        sample every **2 s**.
-        Require `I imu: alive #%u` first at **+5 s**, then every **5 s**, including after polling
-        stops. Quote the captured lines rather than treating these format strings as evidence.
+- [ ] 8. (item 4) **I2C/QMI8658 IMU — serial half PASS 2026-11-23; remaining checks below are
+      PENDING.**
+      - [x] **Bus/probe/init serial — PASS 2026-11-23**: observed `probe 0x6A no answer`, then
+        `probe 0x6B answered`; WHO_AM_I was **0x05**, revision readback was **0x7C**, and init
+        completed with `up addr=0x6B who=0x05 range=8g/512dps odr=120Hz`. The new `ctrl9 done` and
+        `readback` boot lines are quoted below. Internal-pull-up electrical suitability is not
+        inferred from these serial lines.
+      - [x] **Measured ADDR_AI and CH9/CTRL9 fixes — PASS 2026-11-23**: CTRL1 auto-increment is
+        **bit 6 = 0x40**, not 0x80. With 0x80 the measured burst repeated its first byte
+        (`burst35=41 41 41 41 41 41`); with 0x40 it returned real data (`3F F1 69 03 38 FB`). The
+        vendor CH9/CTRL9 **0x12 AHB-clock-gating command is also required**: without it the output
+        registers returned a moving counter. The corrected macro, bounded CTRL9 completion wait and
+        permanent readback line landed in **`a05fded`**.
+      - [x] **Ready/repeating-sample/alive serial — PASS 2026-11-23**: observed
+        `imu: ready addr=0x6B who=0x05`, two stable full sample lines approximately 2 s apart, and
+        `imu: alive #1`. This proves the quoted serial behavior, not a longer cadence soak.
+
+        Coordinator's final `./cb flash --target 04_imu` capture:
+
+        ```text
+        I (590) cb_imu: probe 0x6A no answer
+        I (591) cb_imu: probe 0x6B answered
+        I (596) cb_imu: ctrl9 cmd 0x12 done in 5 ms
+        I (648) cb_imu: readback revision=0x7C ctrl1=0x40 ctrl2=0x26 ctrl3=0x56 ctrl7=0x03 ctrl9=0x12
+        I (648) cb_imu: up addr=0x6B who=0x05 range=8g/512dps odr=120Hz
+        I (648) imu: ready addr=0x6B who=0x05
+        I (649) imu: ax=-0.921 ay=+0.212 az=-0.299 gx=-2.16 gy=-3.22 gz=+0.12 temp_c=+31.05
+        I (2650) imu: ax=-0.923 ay=+0.211 az=-0.300 gx=-2.27 gy=-3.31 gz=+0.16 temp_c=+31.03
+        I (6652) imu: alive #1
+        ```
       - [ ] **R23 resting acceptance** — with the board resting flat, the largest of
         `|ax|`, `|ay|`, `|az|` must be **0.9–1.1 g**; each of the other two accel axes must be
         **<0.15 g**; every `|gx|`, `|gy|`, `|gz|` must be **<2.00 dps**; and `temp_c` must be
         **10–50 °C**. Record actual numeric samples. These are sanity thresholds, not calibration,
-        full-scale accuracy or axis-orientation proof.
+        full-scale accuracy or axis-orientation proof. **Measured in this capture**:
+        `ax=-0.921 ay=+0.212 az=-0.299`, magnitude **0.99 g** concentrated on X with the board
+        resting on its side; gyro was within approximately **3 dps** of zero and temperature was
+        stable near **31 °C**. This is functional serial evidence, but the side-resting capture does
+        not meet every strict threshold above (`ay`/`az` and `gx`/`gy`), so no R23 acceptance or
+        accuracy/bias-calibration PASS is claimed.
       - [ ] **Degraded paths** — if neither address ACKs, record one
         `W imu: no IMU found (probed 0x6A/0x6B), samples skipped` and continuing alive lines with
         no ready/sample lines; mark this **SKIP/degraded, never PASS**. On a read error, require
@@ -339,9 +364,10 @@ Procedure per line: run the command, compare with "expected", tick and fill in d
       - [ ] **Root regression serial** — fresh `app` boot must contain
         `cb_bsp=0.3.0 init(CB_PART_ALL)=ESP_OK` and continuing `hello_beeper: alive #N`; only SD
         should remain `not implemented`. This does not prove optional IMU health.
-      - [ ] **Human/electrical checks** — deliberate motion response, full-scale accuracy, axis
-        orientation and internal-pull-up signal integrity at 400 kHz remain **PENDING** even after
-        the serial checks above pass.
+      - [ ] **Human/electrical checks** — deliberate motion response (tilt/shake changes the vector
+        as expected), full-scale accuracy and **accuracy/bias calibration** remain **PENDING (needs
+        human)**. Axis orientation and internal-pull-up signal integrity at 400 kHz also remain
+        PENDING even after the serial checks above pass.
 - [ ] 9. (item 5+) SD: mount logs the bus width used (4-bit, or 1-bit fallback); write/read
       round-trip passes; **no card is ever auto-formatted**.
 - [ ] 10. (item 6+) `./cb selftest` → `SELFTEST`/`ITEM:`/`RESULT:` lines, `RESULT` all PASS

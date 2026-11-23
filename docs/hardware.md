@@ -2,9 +2,10 @@
 
 > Status (updated for item 4): chip identity, flash size, PSRAM presence, console and app boot are
 > **hardware-verified**. Item-2 display and item-3 `cb_bsp=0.2.0`, RGB, button and calibrated
-> battery serial checks are also recorded. Item-4 I2C/IMU behaviour below is the frozen design
-> contract, not a hardware claim until the coordinator captures it. Pin values mirror
-> `components/cb_bsp/include/cb_pins.h`; measurements live in [verification.md](verification.md).
+> battery serial checks are also recorded. Item-4 I2C/IMU configuration and stable samples were
+> serial-observed on 2026-11-23; motion response, accuracy/bias calibration and pull-up electrical
+> quality remain PENDING. Pin values mirror `components/cb_bsp/include/cb_pins.h`; measurements
+> live in [verification.md](verification.md).
 
 ## Board / SoC
 
@@ -116,14 +117,18 @@ Other frozen constants: `CB_LCD_SPI_HOST 1` (= `SPI2_HOST`; the skeleton-verifie
   and logs the winner. If neither answers, init returns `ESP_ERR_NOT_FOUND`; the example enters its
   alive-only degraded path. WHO_AM_I register 0x00 is read next; expected **0x05**. A mismatch
   produces a WARN and `ESP_ERR_INVALID_RESPONSE`, never a process abort; the optional part is
-  suppressed by `cb_bsp`. No CTRL9 command or unbounded wait is used.
-- **Configuration order**: CTRL1 `CB_QMI_CTRL1_ADDR_AI` (**0x80**) to make burst reads advance,
-  CTRL2 accel **±8 g** + selected ODR (120 Hz range/ODR bits 0x26), CTRL3 gyro **±512 dps** +
-  selected ODR (120 Hz range/ODR bits 0x56), preserving unmasked bits in both RMWs; CTRL5 **LPF
-  mode 0/bypass** using complement-mask RMW, then CTRL7
-  `CB_QMI_CTRL7_ACC_EN | CB_QMI_CTRL7_GYR_EN` (**0x03**) to enable both sensors. ODR choice symbols
-  are `CB_IMU_ODR_120` (`CONFIG_CB_IMU_ODR_120=y` by default), `CB_IMU_ODR_250` and
-  `CB_IMU_ODR_1000`.
+  suppressed by `cb_bsp`. **Measured 2026-11-23**: 0x6A was silent, 0x6B answered, WHO_AM_I was
+  **0x05** and revision readback was **0x7C** ([verification.md](verification.md) checklist 8).
+- **Configuration order**: CTRL1 `CB_QMI_CTRL1_ADDR_AI` (**0x40**, bit 6) to make burst reads
+  advance, then the required vendor CH9/CTRL9 `CB_QMI_CTRL_CMD_AHB_CLOCK_GATING` command (**0x12**)
+  with a bounded 100 ms STATUSINT poll, before CTRL2 accel **±8 g** + selected ODR (120 Hz range/ODR
+  bits 0x26), CTRL3 gyro **±512 dps** + selected ODR (120 Hz range/ODR bits 0x56), preserving
+  unmasked bits in both RMWs; CTRL5 **LPF mode 0/bypass** using complement-mask RMW, then CTRL7
+  `CB_QMI_CTRL7_ACC_EN | CB_QMI_CTRL7_GYR_EN` (**0x03**) to enable both sensors. **Measured
+  2026-11-23** (fixed in `a05fded`): 0x80 made a burst repeat its first byte, 0x40 returned real
+  data, and omitting CTRL9 0x12 made the output registers return a moving counter
+  ([verification.md](verification.md) checklist 8). ODR choice symbols are `CB_IMU_ODR_120`
+  (`CONFIG_CB_IMU_ODR_120=y` by default), `CB_IMU_ODR_250` and `CB_IMU_ODR_1000`.
 - **Burst**: one bounded `i2c_master_transmit_receive` starts at `CB_QMI_TEMP_L` (0x33) and reads
   `CB_IMU_RAW_LEN` (**14**) bytes through `CB_QMI_GZ_H` (0x40): TEMP, AX, AY, AZ, GX, GY, GZ,
   little-endian int16. Accel/gyro scale is raw×range/32768; temperature is signed raw/256 °C.
