@@ -4,7 +4,8 @@
  *
  * Frozen init sequence (ITEM4-RULINGS R21): probe 0x6A -> 0x6B (log each
  * outcome) -> WHO_AM_I == CB_QMI_WHO_AM_I_VAL (else WARN + error, never an
- * abort) -> CTRL1 = ADDR_AI (R19) -> CTRL2 RMW (+-8 g range, ODR) -> CTRL3
+ * abort) -> CTRL1 = ADDR_AI (R19; bit 6, 0x40 — measured 2026-11-23) ->
+ * CTRL2 RMW (+-8 g range, ODR) -> CTRL3
  * RMW (+-512 dps range, ODR) -> CTRL5 RMW (LPF mode 0, bitwise ~MASK clears
  * only — the vendor !MASK bug class is forbidden, R20) -> CTRL7 =
  * ACC_EN | GYR_EN -> `up addr=.. who=.. range=8g/512dps odr=..Hz`.
@@ -16,14 +17,9 @@
  * words identical and ramping through the whole int16 range). The vendor's
  * completion wait (`while ((STATUSINT & 0x80) == 0)`) is unbounded —
  * docs/troubleshooting.md vendor-bug ledger — so we bound it (100 ms).
- * After the config writes a one-line register readback is logged (permanent
- * boot diagnostics, not debug litter). Round 2 of the hardware hunt
- * (IMU-HW-FAIL2.md) adds a 50 ms post-enable settle and a diagnostic dump
- * (seven single reads + two short bursts + STATUSINT) — permanent lines
- * until the hunt concludes. Round 3 (IMU-HW-FAIL3.md) adds the auto-
- * increment experiment: REVISION_ID, CTRL1 candidates {0x80,0x40,0xC0}
- * each followed by a 6-byte burst at 0x35, and six software-stepped
- * single-byte reads; CTRL1 is restored to 0x80 afterwards.
+ * After the config writes one boot readback line is logged (revision +
+ * ctrl1..ctrl9 — permanent diagnostics, not debug litter). A 50 ms settle
+ * after CTRL7 precedes the first data read.
  *
  * The 14-byte burst (CB_IMU_RAW_LEN) starts at CB_QMI_TEMP_L and is decoded
  * by the pure cb_imu_math module (R16/R17) — this file re-derives no
@@ -36,7 +32,6 @@
 #include "cb_imu.h"
 
 #include <stddef.h>
-#include <string.h>
 
 #include "cb_i2c.h"
 #include "cb_pins.h"
@@ -174,126 +169,6 @@ static esp_err_t ctrl9_command(uint8_t cmd)
     ESP_LOGW(TAG, "ctrl9 cmd 0x%02X wait timeout (status 0x%02X)",
              (unsigned)cmd, (unsigned)status);
     return ESP_ERR_TIMEOUT;
-}
-
-/* ---- round-2 hardware diagnostics (IMU-HW-FAIL2.md, 2026-11-23) ---- */
-
-/* One bounded 2-byte little-endian read of a register pair (the high byte
- * still depends on auto-increment — part of what the experiment tests).
- * Zeros the buffer on error: a visibly wrong diagnostic value. */
-static void read_u16_le(uint8_t reg, uint8_t out[2])
-{
-    esp_err_t err = i2c_master_transmit_receive(s_dev, &reg, 1, out, 2,
-                                                CB_QMI_COMM_TIMEOUT_MS);
-    if (err != ESP_OK) {
-        out[0] = 0;
-        out[1] = 0;
-    }
-}
-
-/* One bounded 4-byte burst read (auto-increment across four registers).
- * out[0] is the first byte read. Zeros on error. */
-static void read_burst4(uint8_t reg, uint8_t out[4])
-{
-    esp_err_t err = i2c_master_transmit_receive(s_dev, &reg, 1, out, 4,
-                                                CB_QMI_COMM_TIMEOUT_MS);
-    if (err != ESP_OK) {
-        out[0] = out[1] = out[2] = out[3] = 0;
-    }
-}
-
-/* Decisive experiment: seven SEPARATE 2-byte reads (0x33,0x35,0x37,0x39,
- * 0x3B,0x3D,0x3F) vs two short bursts (from 0x33 and 0x35) vs STATUSINT.
- * One line each, permanent boot diagnostics. */
-static void imu_diagnostic_dump(void)
-{
-    uint8_t t[2], ax[2], ay[2], az[2], gx[2], gy[2], gz[2];
-    uint8_t b33[4], b35[4];
-    uint8_t status = 0;
-
-    read_u16_le(CB_QMI_TEMP_L, t);
-    read_u16_le(CB_QMI_AX_L, ax);
-    read_u16_le(CB_QMI_AY_L, ay);
-    read_u16_le(CB_QMI_AZ_L, az);
-    read_u16_le(CB_QMI_GX_L, gx);
-    read_u16_le(CB_QMI_GY_L, gy);
-    read_u16_le(CB_QMI_GZ_L, gz);
-    read_burst4(CB_QMI_TEMP_L, b33);
-    read_burst4(CB_QMI_AX_L, b35);
-    (void)read_reg(CB_QMI_STATUSINT, &status);
-
-    ESP_LOGI(TAG,
-             "single temp=0x%02X%02X ax=0x%02X%02X ay=0x%02X%02X "
-             "az=0x%02X%02X gx=0x%02X%02X gy=0x%02X%02X gz=0x%02X%02X",
-             (unsigned)t[0], (unsigned)t[1], (unsigned)ax[0], (unsigned)ax[1],
-             (unsigned)ay[0], (unsigned)ay[1], (unsigned)az[0], (unsigned)az[1],
-             (unsigned)gx[0], (unsigned)gx[1], (unsigned)gy[0], (unsigned)gy[1],
-             (unsigned)gz[0], (unsigned)gz[1]);
-    ESP_LOGI(TAG,
-             "burst33=0x%02X%02X%02X%02X burst35=0x%02X%02X%02X%02X "
-             "statusint=0x%02X",
-             (unsigned)b33[0], (unsigned)b33[1], (unsigned)b33[2],
-             (unsigned)b33[3], (unsigned)b35[0], (unsigned)b35[1],
-             (unsigned)b35[2], (unsigned)b35[3], (unsigned)status);
-}
-
-/* ---- round-3 hardware diagnostics (IMU-HW-FAIL3.md, 2026-11-23) ---- */
-
-/* One bounded 1-byte read. 0x00 on error (a visibly wrong diagnostic value). */
-static uint8_t read_u8(uint8_t reg)
-{
-    uint8_t val = 0;
-
-    (void)i2c_master_transmit_receive(s_dev, &reg, 1, &val, 1,
-                                      CB_QMI_COMM_TIMEOUT_MS);
-    return val;
-}
-
-/* One bounded N-byte burst read. Zeros the buffer on error. */
-static void read_burst(uint8_t reg, uint8_t *out, size_t len)
-{
-    esp_err_t err = i2c_master_transmit_receive(s_dev, &reg, 1, out, len,
-                                                CB_QMI_COMM_TIMEOUT_MS);
-    if (err != ESP_OK) {
-        memset(out, 0, len);
-    }
-}
-
-/* Last blind diagnostic (IMU-HW-FAIL3.md): REVISION_ID, three CTRL1
- * candidates each followed by a 6-byte burst at 0x35, then six software-
- * stepped single-byte reads at 0x35..0x3A. One line each; CTRL1 is restored
- * to CB_QMI_CTRL1_ADDR_AI afterwards so the boot state is unchanged. */
-#define CB_IMU_CTRL1_TRIAL_STEP_MS 5
-
-static void imu_ai_experiment(void)
-{
-    static const uint8_t candidates[] = { 0x80, 0x40, 0xC0 };
-    uint8_t buf[6];
-    uint8_t stepped[6];
-    size_t i;
-    size_t j;
-
-    ESP_LOGI(TAG, "revision=0x%02X", (unsigned)read_u8(CB_QMI_REVISION_ID));
-
-    for (i = 0; i < sizeof(candidates); ++i) {
-        (void)write_reg(CB_QMI_CTRL1, candidates[i]);
-        vTaskDelay(pdMS_TO_TICKS(CB_IMU_CTRL1_TRIAL_STEP_MS));
-        read_burst(CB_QMI_AX_L, buf, sizeof(buf));
-        ESP_LOGI(TAG, "ctrl1=0x%02X burst35=%02X %02X %02X %02X %02X %02X",
-                 (unsigned)candidates[i],
-                 (unsigned)buf[0], (unsigned)buf[1], (unsigned)buf[2],
-                 (unsigned)buf[3], (unsigned)buf[4], (unsigned)buf[5]);
-    }
-
-    /* Restore the configured value (R19) so the boot state stays truthful. */
-    (void)write_reg(CB_QMI_CTRL1, CB_QMI_CTRL1_ADDR_AI);
-
-    for (j = 0; j < sizeof(stepped); ++j) {
-        stepped[j] = read_u8((uint8_t)(CB_QMI_AX_L + j));
-    }
-    ESP_LOGI(TAG, "stepped35=%02X %02X %02X %02X %02X %02X",
-             (unsigned)stepped[0], (unsigned)stepped[1], (unsigned)stepped[2],
-             (unsigned)stepped[3], (unsigned)stepped[4], (unsigned)stepped[5]);
 }
 
 esp_err_t cb_imu_init(void)
@@ -438,37 +313,32 @@ esp_err_t cb_imu_init(void)
         goto fail_cfg;
     }
 
-    /* Round-2 diagnostic (IMU-HW-FAIL2.md): 50 ms settle after CTRL7
-     * before the first data read. Keep only if the experiment shows it is
-     * required; otherwise remove. */
+    /* 50 ms settle after CTRL7 before the first data read (kept: cheap,
+     * hardware-hunt artifact; harmless if not strictly required). */
     vTaskDelay(pdMS_TO_TICKS(50));
 
     /* Permanent boot readback (one line): verify every configured register
      * actually stuck — the evidence line for the hardware failure hunt. */
     {
+        uint8_t rev = 0;
         uint8_t c1 = 0;
         uint8_t c2 = 0;
         uint8_t c3 = 0;
         uint8_t c7 = 0;
         uint8_t c9 = 0;
 
+        (void)read_reg(CB_QMI_REVISION_ID, &rev);
         (void)read_reg(CB_QMI_CTRL1, &c1);
         (void)read_reg(CB_QMI_CTRL2, &c2);
         (void)read_reg(CB_QMI_CTRL3, &c3);
         (void)read_reg(CB_QMI_CTRL7, &c7);
         (void)read_reg(CB_QMI_CTRL9, &c9);
         ESP_LOGI(TAG,
-                 "readback ctrl1=0x%02X ctrl2=0x%02X ctrl3=0x%02X "
-                 "ctrl7=0x%02X ctrl9=0x%02X",
-                 (unsigned)c1, (unsigned)c2, (unsigned)c3, (unsigned)c7,
-                 (unsigned)c9);
+                 "readback revision=0x%02X ctrl1=0x%02X ctrl2=0x%02X "
+                 "ctrl3=0x%02X ctrl7=0x%02X ctrl9=0x%02X",
+                 (unsigned)rev, (unsigned)c1, (unsigned)c2, (unsigned)c3,
+                 (unsigned)c7, (unsigned)c9);
     }
-
-    /* Decisive experiment (IMU-HW-FAIL2.md): single reads vs bursts. */
-    imu_diagnostic_dump();
-
-    /* Last blind experiment (IMU-HW-FAIL3.md): ADDR_AI candidates. */
-    imu_ai_experiment();
 
     xSemaphoreGive(s_mutex);
 

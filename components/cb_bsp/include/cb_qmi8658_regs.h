@@ -96,7 +96,11 @@
 
 /* Item-4 review-round additions (ITEM4-RULINGS R19/R20) — additive only,
  * no renames. */
-#define CB_QMI_CTRL1_ADDR_AI 0x80
+/* Address auto-increment enable is BIT 6 (0x40), not bit 7: measured
+ * 2026-11-23 on hardware (IMU-HW-FAIL4.md) — with 0x80 a burst at 0x35
+ * repeats the first byte; with 0x40 it returns distinct bytes (a real
+ * 0.99 g vector). */
+#define CB_QMI_CTRL1_ADDR_AI 0x40
 #define CB_QMI_CTRL7_ACC_EN 0x01
 #define CB_QMI_CTRL7_GYR_EN 0x02
 
