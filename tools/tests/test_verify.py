@@ -110,6 +110,7 @@ class TestVerifyHappyPath(TempRepoTest):
                 "build:01_lcd_hello",
                 "build:02_rgb_button",
                 "build:03_battery",
+                "build:04_imu",
                 "sdkconfig-assert",
                 "arduino:*",
                 "guards-no-board",
