@@ -12,7 +12,7 @@ RUN_TESTS := $(HOST_BUILD_DIR)/run_tests
 
 CC ?= cc
 CPPFLAGS ?=
-CPPFLAGS += -I$(REPO_ROOT)/components/cb_bsp/include
+CPPFLAGS += -I$(REPO_ROOT)/components/cb_bsp/include -I$(REPO_ROOT)/tests/host/stubs
 CFLAGS ?= -std=c99 -O0 -g -Wall -Wextra -Werror -pedantic
 LDFLAGS ?=
 LDLIBS ?=
@@ -32,7 +32,9 @@ TEST_HEADERS := \
 	$(REPO_ROOT)/components/cb_bsp/include/cb_qmi8658_regs.h \
 	$(REPO_ROOT)/components/cb_bsp/include/cb_pattern.h \
 	$(REPO_ROOT)/components/cb_bsp/include/cb_rgb_math.h \
-	$(REPO_ROOT)/components/cb_bsp/include/cb_battery_math.h
+	$(REPO_ROOT)/components/cb_bsp/include/cb_battery_math.h \
+	$(REPO_ROOT)/components/cb_bsp/include/cb_button.h \
+	$(REPO_ROOT)/tests/host/stubs/esp_err.h
 
 .PHONY: all run_tests test clean
 .DELETE_ON_ERROR:
