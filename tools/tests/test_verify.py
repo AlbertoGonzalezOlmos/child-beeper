@@ -236,6 +236,10 @@ class TestVerifyFailures(TempRepoTest):
             "examples/02_rgb_button missing (CMakeLists.txt not found)",
         )
         self.assertEqual(by_id["build:03_battery"].status, "FAIL")
+        self.assertEqual(
+            by_id["build:03_battery"].detail,
+            "examples/03_battery missing (CMakeLists.txt not found)",
+        )
         self.assertEqual(code, 1)
 
     def test_fast_mode_still_fails_without_item3_examples(self) -> None:
