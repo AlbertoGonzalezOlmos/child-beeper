@@ -15,9 +15,20 @@ support package (`components/cb_bsp`) plus one example per peripheral, with an A
 ## With a board attached
 
 ```bash
-./cb flash      # refuses with exit 2 + BOOT/RESET recovery hint when no port is found
+./flash.sh       # one command: build the app (plus its Wi-Fi settings image) and flash it
+./flash.sh --monitor   # also open the serial console afterwards (Ctrl-] quits)
+./cb flash       # refuses with exit 2 + BOOT/RESET recovery hint when no port is found
 ./cb monitor
 ```
+
+## Wi-Fi
+
+The root app connects to the network named in **`wifi_settings.txt`** (repo root; created from
+`wifi_settings.example.txt` on the first `./flash.sh` run). The build embeds the file into the FAT
+`storage` partition and flashes it with the app, so the flow is: edit `wifi_settings.txt` →
+`./flash.sh`. With no SSID configured (or on any failure) the app keeps running with Wi-Fi off —
+the heartbeat line shows `wifi=off` / `wifi=connecting` / `wifi=connected <ip>` / `wifi=failed`.
+The file is gitignored, so real passwords never land in git.
 
 See [docs/index.md](docs/index.md) for the full documentation map (hardware, ESP-IDF, Arduino,
 flashing, API, verification, troubleshooting) and [AGENTS.md](AGENTS.md) for working rules.

@@ -1,6 +1,9 @@
 # Editor / IDE
 .vscode/
 
+# Wi-Fi credentials (item 8): edited locally, template wifi_settings.example.txt is committed
+wifi_settings.txt
+
 # ESP-IDF build artifacts
 build/
 managed_components/

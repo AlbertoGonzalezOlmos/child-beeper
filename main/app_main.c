@@ -36,6 +36,7 @@
 #include "cb_pattern.h"
 #include "cb_pins.h"
 #include "lvgl.h"
+#include "wifi_sta.h"
 
 static const char *TAG = "hello_beeper";
 
@@ -122,8 +123,18 @@ void app_main(void)
     }
     /* Backlight: owned by cb_lcd's one-shot first-frame hook (ruling A2). */
 
+    /* Wi-Fi (optional, item 8): credentials come from wifi_settings.txt in the
+     * repo root, embedded into the FAT 'storage' partition at build time and
+     * flashed together with the app by ./flash.sh. With no credentials — or on
+     * any failure — the app keeps running with Wi-Fi off. The connection
+     * attempt runs in its own task, so the heartbeat below never stalls. */
+    wifi_sta_init();
+    wifi_sta_connect(20000);
+
     for (int i = 1;; ++i) {
-        ESP_LOGI(TAG, "alive #%d", i);
+        char wifi[48];
+        wifi_sta_describe(wifi, sizeof(wifi));
+        ESP_LOGI(TAG, "alive #%d %s", i, wifi);
         if (i == 1) {
             /* One-shot, after the first heartbeat: the console is reliably
              * attached by now, so the boot state is observable even though

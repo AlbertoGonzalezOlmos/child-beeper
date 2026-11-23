@@ -1,0 +1,17 @@
+# child-beeper Wi-Fi settings (item 8).
+#
+# Copy this file to wifi_settings.txt, fill in YOUR network, then run
+# ./flash.sh — the build embeds wifi_settings.txt into the FAT 'storage'
+# partition and flashes it together with the app.
+#
+#   ssid      = your Wi-Fi network name (spaces allowed, max 32 chars)
+#   password  = the network password (max 63 chars)
+#
+# Rules:
+#   - one key=value pair per line; blank lines and # comments are ignored
+#   - WPA2/WPA3-PSK networks only; open or WEP networks are not supported
+#   - if ssid stays empty or YOUR_SSID, Wi-Fi stays off and the app keeps
+#     running (the serial console shows "wifi=off")
+#   - wifi_settings.txt is gitignored — the real password never lands in git
+ssid=YOUR_SSID
+password=YOUR_PASSWORD

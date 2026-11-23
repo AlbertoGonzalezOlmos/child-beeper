@@ -2,3 +2,9 @@ dependencies:
   idf: ">=6.1.0,<6.2.0"
   cb_bsp:
     path: ../components/cb_bsp
+  # app_main.c draws the screen with LVGL directly (lvgl.h), so main declares
+  # its own dependency — managed deps default to private, and cb_bsp keeps
+  # lvgl private by contract (its CMakeLists never lists lvgl in REQUIRES).
+  lvgl/lvgl:
+    version: "9.5.0"
+    require: public

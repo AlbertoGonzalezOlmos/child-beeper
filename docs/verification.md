@@ -45,6 +45,11 @@ Rule (also in `AGENTS.md`): *never claim hardware-verified without a board.*
   true early boot log.
 - **BOOT+RESET recovery drill** (hold BOOT → tap RESET → release) needs a physical finger on the
   buttons — still pending.
+- **Wi-Fi STA connect** (item 8): the root app reads `wifi_settings.txt` from the FAT `storage`
+  partition (embedded at build time, flashed with `./flash.sh`) and connects with `esp_wifi`.
+  **Build-verified only** — the image round-trip (`fatfsparse.py` shows the settings inside
+  `storage.bin`) and the whole pipeline are proven on the host; the actual connection, DHCP
+  answer, retry path and the `wifi=…` heartbeat states still need the board on a real network.
 
 ## `./cb verify` — the no-board gate
 
