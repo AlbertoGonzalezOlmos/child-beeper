@@ -1,11 +1,10 @@
 # Hardware reference — Waveshare ESP32-S3-LCD-1.47B
 
-> Status (updated for item 3): chip identity, flash size, PSRAM presence, console and app boot are
-> **hardware-verified**. LCD/LVGL init/backlight and 12 frames, the item-3 `cb_bsp=0.2.0` boot
-> summary, RGB cap transactions, the 10 ms button poller and calibrated battery samples were also
-> serial-observed on 2026-11-23. Visual/gesture/multimeter checks remain PENDING (needs human).
-> Pin values mirror `components/cb_bsp/include/cb_pins.h`; measurements live in
-> [verification.md](verification.md).
+> Status (updated for item 4): chip identity, flash size, PSRAM presence, console and app boot are
+> **hardware-verified**. Item-2 display and item-3 `cb_bsp=0.2.0`, RGB, button and calibrated
+> battery serial checks are also recorded. Item-4 I2C/IMU behaviour below is the frozen design
+> contract, not a hardware claim until the coordinator captures it. Pin values mirror
+> `components/cb_bsp/include/cb_pins.h`; measurements live in [verification.md](verification.md).
 
 ## Board / SoC
 
@@ -109,11 +108,32 @@ Other frozen constants: `CB_LCD_SPI_HOST 1` (= `SPI2_HOST`; the skeleton-verifie
 
 ## IMU (QMI8658, I2C)
 
-- Candidate addresses **0x6A and 0x6B** — the vendor wiki says 0x6A, the vendor code uses 0x6B, so
-  the driver (item 4) **probes both** with `i2c_master_probe()` and logs the winner.
-- WHO_AM_I register 0x00, expected value **0x05** (mismatch = WARN, not hard fail; several chip
-  revisions circulate). 6-axis accel+gyro+temperature; register block frozen in
-  `cb_qmi8658_regs.h` (see [api.md](api.md)).
+- **Bus**: new `driver/i2c_master.h` only. Port 0, SCL47, SDA48, 400 kHz,
+  `I2C_CLK_SRC_DEFAULT`, `glitch_ignore_cnt=7`, internal pull-ups **enabled** and logged as
+  `i2c: internal pull-ups enabled`. Internal pull-up strength/signal integrity is
+  **hardware-PENDING**, not proven by the log.
+- **Probe/identity**: `i2c_master_probe()` tries **0x6A then 0x6B** with a bounded 50 ms timeout
+  and logs the winner. If neither answers, init returns `ESP_ERR_NOT_FOUND`; the example enters its
+  alive-only degraded path. WHO_AM_I register 0x00 is read next; expected **0x05**. A mismatch
+  produces a WARN and `ESP_ERR_INVALID_RESPONSE`, never a process abort; the optional part is
+  suppressed by `cb_bsp`. No CTRL9 command or unbounded wait is used.
+- **Configuration order**: CTRL1 `CB_QMI_CTRL1_ADDR_AI` (**0x80**) to make burst reads advance,
+  CTRL2 accel **±8 g** + selected ODR (120 Hz range/ODR bits 0x26), CTRL3 gyro **±512 dps** +
+  selected ODR (120 Hz range/ODR bits 0x56), preserving unmasked bits in both RMWs; CTRL5 **LPF
+  mode 0/bypass** using complement-mask RMW, then CTRL7
+  `CB_QMI_CTRL7_ACC_EN | CB_QMI_CTRL7_GYR_EN` (**0x03**) to enable both sensors. ODR choice symbols
+  are `CB_IMU_ODR_120` (`CONFIG_CB_IMU_ODR_120=y` by default), `CB_IMU_ODR_250` and
+  `CB_IMU_ODR_1000`.
+- **Burst**: one bounded `i2c_master_transmit_receive` starts at `CB_QMI_TEMP_L` (0x33) and reads
+  `CB_IMU_RAW_LEN` (**14**) bytes through `CB_QMI_GZ_H` (0x40): TEMP, AX, AY, AZ, GX, GY, GZ,
+  little-endian int16. Accel/gyro scale is raw×range/32768; temperature is signed raw/256 °C.
+- **Concurrency**: one mutex serializes WHO/configuration transfers and sample reads with a
+  **100 ms** acquisition bound. A busy sample read returns `ESP_ERR_TIMEOUT` and its WARN is
+  first-event-allowed and rate-limited to ≤1 Hz with race-free last-log state. The driver emits no
+  per-read data line; `04_imu` owns the 2 s sample output.
+- Resting acceptance for the example/README is max |axis| **0.9–1.1 g**, other axes **<0.15 g**,
+  |gyro| **<2.00 dps**, temperature **10–50 °C**. Full-scale accuracy, axis orientation, deliberate
+  motion and pull-up electrical quality remain human/hardware checks.
 
 ## Battery sense
 

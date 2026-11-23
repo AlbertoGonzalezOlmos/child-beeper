@@ -1,10 +1,10 @@
 # Troubleshooting & known pitfalls
 
 > Status: item 3 build-verified (12 pass, 0 fail, 2 skip on 2026-11-23), with item-2 display and
-> item-3 `cb_bsp=0.2.0`, RGB cap, button-poller and calibrated-battery serial evidence. Round-2
-> fixes are in review; visual/gesture/multimeter checks remain pending. Measured facts come from
-> the vendor demo, this toolchain and dated serial captures, not wiki prose. Symptoms marked
-> *(hardware)* can only be confirmed on the board — see [verification.md](verification.md).
+> item-3 `cb_bsp=0.2.0`, RGB cap, button-poller and calibrated-battery serial evidence. Item-4
+> I2C/IMU guidance is frozen but its coordinator gate/flash results are pending. Measured facts
+> come from the vendor demo, this toolchain and dated serial captures, not wiki prose. Symptoms
+> marked *(hardware)* can only be confirmed on the board — see [verification.md](verification.md).
 
 ## Why the vendor demo does not build on IDF v6.1 (measured)
 
@@ -144,6 +144,37 @@ to make these visible at a glance on hardware day.
   (per-agent `-DSDKCONFIG` + repo `flock` at `<build_root>/.cb.lock`).
 - Never delete/edit another agent's `build/<name>/` tree; use your own `CB_BUILD_ROOT`.
 - Disk: each LVGL build dir is a few hundred MB — `./cb clean` when idle.
+
+## Item-4 I2C and QMI8658
+
+- **I2C config does not compile**: use `driver/i2c_master.h` (never legacy `driver/i2c.h`). The bus
+  config field is `.glitch_ignore_cnt=7`; device config explicitly needs
+  `.dev_addr_length=I2C_ADDR_BIT_LEN_7`, `.device_address=<winner>`, and
+  `.scl_speed_hz=CB_I2C_FREQ_HZ`. `esp_driver_i2c` is a public REQUIRES because `cb_i2c.h`
+  exposes the bus handle.
+- **No ACK at either address**: the driver probes 0x6A then 0x6B with a 50 ms bound, returns
+  `ESP_ERR_NOT_FOUND`, and the example prints
+  `W imu: no IMU found (probed 0x6A/0x6B), samples skipped` once. It then emits only
+  `imu: alive #N` every 5 s. This is degraded/SKIP evidence, not a hardware PASS. Internal pull-ups
+  are enabled by ruling, but their electrical suitability is hardware-pending.
+- **WHO_AM_I mismatch**: expected 0x05, but a mismatch produces a WARN and
+  `ESP_ERR_INVALID_RESPONSE`, not a process abort. Record the actual byte from the WARN; do not
+  silently rewrite it to 0x05. A post-add/WHO/config failure removes the device and mutex and
+  leaves addr/WHO at zero, so `cb_imu_addr()` cannot falsely report presence.
+- **WHO works but samples repeat/tear**: verify CTRL1 wrote `CB_QMI_CTRL1_ADDR_AI` (**0x80**) before
+  the burst. Without auto-increment, the 14-byte read can return one register repeatedly. The burst
+  starts at TEMP_L 0x33 and spans 14 bytes through GZ_H 0x40, not AX_L alone.
+- **Unexpected filtering**: item 4 uses LPF mode 0/bypass on both channels. RMW clears
+  `CB_QMI_ALPF_MASK` and `CB_QMI_GLPF_MASK` with `(uint8_t)~MASK`, never logical `!MASK`. CTRL7 is
+  written last with `CB_QMI_CTRL7_ACC_EN | CB_QMI_CTRL7_GYR_EN` (0x03); no CTRL9 wait is used.
+- **Read timeout or degraded output**: all post-add register transfers and sample reads share one
+  mutex with a 100 ms acquisition bound; a busy sample read returns `ESP_ERR_TIMEOUT`. Its busy
+  WARN allows the first event and is then limited to ≤1 Hz with race-free state; pre-init/no-bus
+  WARNs are one-shot. `W imu: read failed: %s` is one-shot and polling stops while alive continues.
+- **ODR mismatch**: the only Kconfig choice is `CB_IMU_ODR` with `CB_IMU_ODR_120` (default y),
+  `CB_IMU_ODR_250`, and `CB_IMU_ODR_1000`. Ranges stay fixed at 8 g/512 dps. No derived integer or
+  range knob is added to Kconfig; the driver's private `CB_IMU_ODR_HZ` macro only formats the
+  selected rate in its init log.
 
 ## Item-3 RGB, button and battery
 

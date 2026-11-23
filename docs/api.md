@@ -1,11 +1,9 @@
-# BSP API reference (items 1–3 — frozen surface)
+# BSP API reference (items 1–4 — frozen surface)
 
-> Status: item-3 API frozen by R1–R8, R1b–R12b and the R13b/R14b review fixes. The completed
-> round-2 gate at `d7fabd3` is **12 pass, 0 fail, 2 skip** in **129.0 s**; the round-3 final gate
-> is pending the coordinator's report. Item-3 serial evidence is recorded in verification.md.
-> Item-2 display visuals and item-3 visual/gesture/multimeter checks remain hardware-PENDING.
-> Only the names on this page are frozen; IMU/SD driver APIs still require their own item review
-> rounds. Do not invent `cb_*` names ahead of their item.
+> Status: item-4 API frozen by R9–R13 and R14–R27; item-4 full-gate and hardware evidence are
+> pending the coordinator. Item 3 is build-verified and its RGB/button/battery serial evidence is recorded
+> in verification.md. Only the names on this page are frozen; the SD driver API still requires its
+> own item review round. Do not invent `cb_*` names ahead of their item.
 
 Component: `components/cb_bsp` (local IDF component). Consumers depend on it by path, e.g.
 `examples/<NN>/main/idf_component.yml`:
@@ -25,7 +23,7 @@ Headers are flat: `#include "cb_bsp.h"`, `#include "cb_pins.h"`, … (the compon
 
 ```c
 #define CB_BSP_VERSION_MAJOR 0
-#define CB_BSP_VERSION_MINOR 2
+#define CB_BSP_VERSION_MINOR 3
 #define CB_BSP_VERSION_PATCH 0
 
 typedef enum {
@@ -43,7 +41,7 @@ typedef enum {
 } cb_part_t;
 
 esp_err_t cb_bsp_init(uint32_t parts);   /* inits only the requested parts, in fixed order */
-const char *cb_bsp_version(void);        /* "0.2.0" */
+const char *cb_bsp_version(void);        /* "0.3.0" */
 ```
 
 **Fixed init order:** BACKLIGHT → RGB → I2C → IMU → BUTTON → BATTERY → LCD → LVGL → SD
@@ -137,8 +135,9 @@ Porting rules (vendor bugs explicitly **not** inherited — see
   logical NOT (`!MASK`), which zeroes the whole register.
 - The vendor's CTRL9 host-command path contains an **unbounded** `while(...)` wait; item 1 does not
   use CTRL9 at all, and any future use must add a timeout.
-- The driver probes **both** I2C addresses (`CB_QMI_ADDR_0 0x6A`, `CB_QMI_ADDR_1 0x6B`) with
-  `i2c_master_probe()` and logs which answered; WHO_AM_I mismatch is a WARN, not a hard fail.
+- The driver probes `CB_QMI_ADDR_0 0x6A`, then `CB_QMI_ADDR_1 0x6B` if needed, with
+  `i2c_master_probe()` and logs which answered. A WHO_AM_I mismatch logs a WARN and fails optional
+  IMU init with `ESP_ERR_INVALID_RESPONSE`; it never aborts the process.
 
 ## Display stack (item 2 — rulings A1/A2/A4/A7/A8)
 
@@ -368,8 +367,9 @@ esp_err_t cb_battery_read(cb_battery_sample_t *out);
   handler. Its existing first-heartbeat summary should contain
   `cb_bsp=0.2.0 init(CB_PART_ALL)=ESP_OK` when the strict LCD/LVGL parts succeed; that line is not
   proof of optional RGB/button/battery health.
-- After item 3 only I2C, IMU and SD remain requested-but-not-yet-implemented parts. Every repeated
-  warning path added by item 3 is one-shot, transition-gated, or rate-limited to **≤1 Hz** (R14b),
+- After item 3, I2C, IMU and SD remain requested-but-not-yet-implemented parts. Item 4 removes
+  I2C/IMU from that list, leaving only SD for item 5. Every repeated warning path added by item 3
+  is one-shot, transition-gated, or rate-limited to **≤1 Hz** (R14b),
   with race-free last-log state. In particular, the RGB example logs
   `W rgb_button: cycle %u failed: %s` only on the first failure of a failure streak and clears its
   error-active flag on the next successful cycle.
@@ -378,6 +378,180 @@ esp_err_t cb_battery_read(cb_battery_sample_t *out);
   normal sample line remains `battery: raw=%d pin_mv=%ld battery_mv=%ld calibrated=%d plausible=%d`
   every 2 s and `battery: alive #%u` continues every 5 s, so a dead ADC is distinguishable from a
   wedged app. This failure path has not been hardware-injected; it is a code/build contract only.
+
+## I2C and QMI8658 IMU (item 4 — R9–R27)
+
+### `cb_i2c.h` — shared new-driver bus
+
+```c
+#include "driver/i2c_master.h"
+#include "esp_err.h"
+esp_err_t cb_i2c_init(void);
+i2c_master_bus_handle_t cb_i2c_bus(void);  /* NULL until successful init */
+```
+
+These are the **only** public I2C functions: no probe helper, recovery/reset API, deinit or public
+lock API. `CB_PART_I2C` owns the one bus; `CB_PART_IMU` requires it and fails
+`ESP_ERR_INVALID_STATE` if `cb_i2c_bus()` is NULL. `cb_i2c_bus()` returns the shared handle after
+successful init and NULL before it. Public `REQUIRES` includes `esp_driver_i2c` because this header
+exposes the IDF handle type.
+
+`cb_i2c_init()` is idempotent after success and calls `i2c_new_master_bus()` on the initial or
+retry attempt with `.i2c_port=CB_I2C_PORT` (0), `.sda_io_num=CB_PIN_I2C_SDA` (48),
+`.scl_io_num=CB_PIN_I2C_SCL` (47), `.clk_source=I2C_CLK_SRC_DEFAULT`,
+`.glitch_ignore_cnt=7`, `.intr_priority=0`, `.trans_queue_depth=0`,
+`.flags.enable_internal_pullup=true` and `.flags.allow_pd=false`. Internal pull-ups are logged with
+the exact substring `i2c: internal pull-ups enabled`; their electrical suitability at 400 kHz is
+**hardware-PENDING**. Failure returns the bus-creation error, sets the cached handle to NULL and
+permits retry. A second call after successful init logs `already initialized` and returns `ESP_OK`
+without creating another bus.
+
+### `cb_imu_math.h` — pure burst decode
+
+```c
+#include <stdbool.h>
+#include <stdint.h>
+#define CB_IMU_RAW_LEN 14
+typedef struct {
+    float ax_g, ay_g, az_g;
+    float gx_dps, gy_dps, gz_dps;
+    float temp_c;
+} cb_imu_sample_t;
+bool cb_imu_math_decode(const uint8_t *raw, unsigned accel_range_g,
+                        unsigned gyro_range_dps, cb_imu_sample_t *out);
+```
+
+The struct has exactly those fields in that order: X/Y/Z acceleration in **g**, X/Y/Z angular rate
+in **degrees/s**, then die temperature in **°C**. There is no timestamp or separate temperature
+call. `CB_IMU_RAW_LEN` is the public named length contract (`CB_QMI_GZ_H-CB_QMI_TEMP_L+1 == 14`).
+
+The decode reads a burst beginning at `CB_QMI_TEMP_L` (0x33), in this exact slot order:
+TEMP[0..1], AX[2..3], AY[4..5], AZ[6..7], GX[8..9], GY[10..11], GZ[12..13]. All values are
+little-endian. Accel and gyro use the existing `cb_math_le_i16()` followed by
+`cb_math_accel_lsb_to_g()` / `cb_math_gyro_lsb_to_dps()` — `raw*range/32768.0f`. Temperature uses
+`cb_math_qmi_temp_c()` — signed 16-bit two's complement / 256 °C. No new sensitivity or LSB table
+is introduced.
+
+`cb_imu_math_decode` has no length parameter, so its caller must guarantee all 14 bytes are
+readable. It returns false for NULL raw/out, accel range outside {2,4,8,16}, or gyro range outside
+{16,32,64,128,256,512,1024}. Every failure leaves `*out` **byte-identical**. Success computes a
+local sample and assigns it only after all seven fields are complete. `INT16_MIN` is decoded by the
+existing sign-safe helper, never by signed negation. The public constant is host-tested with
+`CB_IMU_RAW_LEN == 14`.
+
+### `cb_imu.h` — QMI8658 device
+
+```c
+#include "cb_imu_math.h"
+#include "esp_err.h"
+esp_err_t cb_imu_init(void);
+esp_err_t cb_imu_read(cb_imu_sample_t *out);
+int cb_imu_addr(void);           /* 0 before full init, otherwise 0x6A or 0x6B */
+uint8_t cb_imu_who_am_i(void);   /* last WHO byte; meaningful when cb_imu_addr() != 0 */
+```
+
+#### Frozen init/probe/configuration path (R21)
+
+1. Successful init is idempotent. No bus returns `ESP_ERR_INVALID_STATE`; no second bus is created
+   implicitly. Create the one IMU mutex used to serialize WHO/configuration transfers and sample
+   reads (100 ms acquisition bound) and clean it up on every failure.
+2. Probe **0x6A then 0x6B** using `i2c_master_probe(bus,addr,CB_QMI_COMM_TIMEOUT_MS)` and stop at
+   the first ACK. If neither answers, clean up and return `ESP_ERR_NOT_FOUND`. Log the outcome.
+3. Add the selected device with `i2c_master_bus_add_device()` using
+   `.dev_addr_length=I2C_ADDR_BIT_LEN_7`, `.device_address=winner`,
+   `.scl_speed_hz=CB_I2C_FREQ_HZ` (400000), `.scl_wait_us=0`, and ACK checking enabled. Any
+   post-add failure calls `i2c_master_bus_rm_device()`, deletes the mutex and leaves addr/WHO at
+   their not-initialized zero values.
+4. Read `CB_QMI_WHO_AM_I` with `i2c_master_transmit_receive`. A mismatch produces a WARN and
+   `ESP_ERR_INVALID_RESPONSE`, never a process abort; `cb_bsp` handles the optional-part error.
+   Read/config errors remove the device and mutex. Complete success logs
+   `cb_imu: up addr=0x%02X who=0x%02X range=8g/512dps odr=%uHz`.
+5. Configure in this exact order, every transfer bounded by `CB_QMI_COMM_TIMEOUT_MS` (50 ms):
+   - **CTRL1**: write `CB_QMI_CTRL1_ADDR_AI` (**0x80**) before any burst. Reset default 0x00 would
+     repeatedly read one register rather than advancing through all 14 bytes.
+   - **CTRL2**: read-modify-write with `CB_QMI_ASCALE_MASK/OFFSET` and `CB_QMI_AODR_MASK`, then set
+     `CB_QMI_ACC_RANGE_8G` and selected ODR. At 120 Hz the range/ODR bits compose to **0x26**;
+     bits outside those masks are preserved.
+   - **CTRL3**: same RMW pattern with `CB_QMI_GSCALE_MASK/OFFSET` and `CB_QMI_GODR_MASK`, using
+     `CB_QMI_GYR_RANGE_512DPS`; at 120 Hz the range/ODR bits compose to **0x56**, again preserving
+     unmasked bits.
+   - **CTRL5**: clear `CB_QMI_ALPF_MASK` and `CB_QMI_GLPF_MASK` using
+     `reg &= (uint8_t)~MASK`, then apply `CB_QMI_LPF_MODE_0` (**0x00**, bypass) to both channels.
+     Never use logical `!MASK`.
+   - **CTRL7**: write `CB_QMI_CTRL7_ACC_EN | CB_QMI_CTRL7_GYR_EN` (**0x03**) last, enabling both
+     sensors. The only added register macros are `CB_QMI_CTRL1_ADDR_AI`, `CB_QMI_CTRL7_ACC_EN`
+     and `CB_QMI_CTRL7_GYR_EN`. No CTRL9 access is permitted.
+6. Set addr/WHO only after the whole sequence succeeds. Post-add failures return the originating
+   error (or `ESP_ERR_INVALID_RESPONSE` for WHO mismatch), remove the device/mutex and leave
+   identity at zero so a later `cb_bsp_init` can retry without stale presence.
+
+Kconfig is exactly a named choice (not a derived integer):
+
+```kconfig
+choice CB_IMU_ODR
+    prompt "QMI8658 IMU output data rate"
+    default CB_IMU_ODR_120
+    config CB_IMU_ODR_120
+        bool "120 Hz"
+    config CB_IMU_ODR_250
+        bool "250 Hz"
+    config CB_IMU_ODR_1000
+        bool "1000 Hz"
+endchoice
+```
+
+The default is `CONFIG_CB_IMU_ODR_120=y`; the driver maps the three symbols to the matching
+`CB_QMI_*_ODR_NORM_*` macros with `#if defined(...)`. Accel and gyro ranges stay fixed at ±8 g and
+±512 dps, with no range Kconfig and no runtime range switching.
+
+#### Read/getter semantics
+
+- `cb_imu_read(NULL)` returns `ESP_ERR_INVALID_ARG`; pre-init returns `ESP_ERR_INVALID_STATE`.
+  `out` is untouched on every error. Mutex timeout is `ESP_ERR_TIMEOUT` (100 ms), with first-event
+  allowed, ≤1 Hz gated WARN and race-free last-log state.
+- Read starts at `CB_QMI_TEMP_L` and performs one
+  `i2c_master_transmit_receive(s_dev,&reg,1,raw,CB_IMU_RAW_LEN,CB_QMI_COMM_TIMEOUT_MS)`.
+  A bus error is returned unchanged and the sample is untouched. On success decode at fixed 8 g /
+  512 dps and return `ESP_OK`, even for a noisy sample. The driver prints **no per-read data line**.
+- `cb_imu_addr()` returns 0 before full init, otherwise the winning address as `int`.
+  `cb_imu_who_am_i()` returns the cached actual WHO byte when addr != 0. No runtime range setter is
+  added.
+
+### `cb_bsp_init` deltas (item 4)
+
+- `CB_PART_I2C` maps to `cb_i2c_init` and `CB_PART_IMU` to `cb_imu_init`, in the existing
+  I2C-before-IMU positions. Both remain optional/WARN-suppressed; all requested parts are attempted.
+  Only SD remains not implemented.
+- `CB_BSP_VERSION_MAJOR/MINOR/PATCH` becomes **0/3/0**, so `cb_bsp_version()` returns `"0.3.0"`.
+  Root source remains unchanged. The expected root boot-summary substring is
+  `cb_bsp=0.3.0 init(CB_PART_ALL)=ESP_OK` when strict parts succeed.
+- The component's explicit `SRCS` list contains `src/cb_i2c.c`, `src/cb_imu.c` and
+  `src/cb_imu_math.c`. `REQUIRES` is `esp_lcd esp_driver_i2c`; the other private driver
+  requirements are unchanged.
+
+### `04_imu` serial contract (R23)
+
+Once after successful init:
+
+```text
+I imu: ready addr=0x%02X who=0x%02X
+```
+
+Every **2 s** while polling:
+
+```text
+I imu: ax=%+.3f ay=%+.3f az=%+.3f gx=%+.2f gy=%+.2f gz=%+.2f temp_c=%+.2f
+```
+
+Alive is `I imu: alive #%u` first at +5 s and then every 5 s, including degraded operation. A read
+failure prints `W imu: read failed: %s` once, then polling stops and alive continues. If
+`cb_imu_addr()==0`, the example prints exactly
+`W imu: no IMU found (probed 0x6A/0x6B), samples skipped` once, suppresses sample lines and keeps
+alive running. There is no abort or fake no-device PASS.
+
+Resting acceptance values for the README/coordinator are: max |accel axis| **0.9–1.1 g**, other two
+axes **<0.15 g**, every |gyro component| **<2.00 dps**, and temperature **10–50 °C**. These are
+sanity checks, not full-scale calibration or axis-orientation proof.
 
 ## Threading / LVGL rules
 
