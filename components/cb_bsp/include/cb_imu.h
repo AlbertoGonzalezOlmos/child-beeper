@@ -20,9 +20,11 @@ extern "C" {
 /* Idempotent; optional part. Requires a successful cb_i2c_init() first —
  * ESP_ERR_INVALID_STATE without a bus (cb_lcd_init_lvgl precedent). Frozen
  * init sequence (R21): probe 0x6A then 0x6B (logs each outcome) -> WHO_AM_I
- * == 0x05 (else WARN + error, never an abort) -> CTRL1 = ADDR_AI -> CTRL2
- * (+-8 g, ODR) -> CTRL3 (+-512 dps, ODR) -> CTRL5 (LPF mode 0) -> CTRL7 =
- * ACC_EN | GYR_EN -> `up addr=.. who=.. range=8g/512dps odr=..Hz`. */
+ * == 0x05 (else WARN + error, never an abort) -> CTRL1 = ADDR_AI -> CTRL9 =
+ * AHB_CLOCK_GATING (0x12, bounded completion wait — hardware fix 2026-11-23)
+ * -> CTRL2 (+-8 g, ODR) -> CTRL3 (+-512 dps, ODR) -> CTRL5 (LPF mode 0) ->
+ * CTRL7 = ACC_EN | GYR_EN -> register readback -> `up addr=.. who=..
+ * range=8g/512dps odr=..Hz`. */
 esp_err_t cb_imu_init(void);
 
 /* Reads the 14-byte burst and decodes all seven fields (R22): ESP_OK even

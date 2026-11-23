@@ -9,6 +9,16 @@
  * only — the vendor !MASK bug class is forbidden, R20) -> CTRL7 =
  * ACC_EN | GYR_EN -> `up addr=.. who=.. range=8g/512dps odr=..Hz`.
  *
+ * Hardware fix (2026-11-23 capture, HW-2026-11-23.md): after CTRL1 the driver
+ * also issues CTRL9 = CB_QMI_CTRL_CMD_AHB_CLOCK_GATING (0x12) — the vendor
+ * command our init skipped. Without it the output registers return a
+ * free-running counter instead of sensor data (measured: all seven burst
+ * words identical and ramping through the whole int16 range). The vendor's
+ * completion wait (`while ((STATUSINT & 0x80) == 0)`) is unbounded —
+ * docs/troubleshooting.md vendor-bug ledger — so we bound it (100 ms).
+ * After the config writes a one-line register readback is logged (permanent
+ * boot diagnostics, not debug litter).
+ *
  * The 14-byte burst (CB_IMU_RAW_LEN) starts at CB_QMI_TEMP_L and is decoded
  * by the pure cb_imu_math module (R16/R17) — this file re-derives no
  * register layout or sensitivity (R10). All bus reads/writes are serialized
@@ -122,6 +132,41 @@ static esp_err_t write_reg(uint8_t reg, uint8_t val)
     return i2c_master_transmit(s_dev, tx, sizeof(tx), CB_QMI_COMM_TIMEOUT_MS);
 }
 
+/* CTRL9 host command (R10's only command macro): write it, then wait for
+ * completion exactly the way the vendor does — STATUSINT bit7 set — but
+ * BOUNDED (docs/troubleshooting.md vendor-bug ledger: the vendor's while
+ * loop is unbounded and hangs on a broken chip). Timeout is a WARN + error,
+ * never an abort. */
+#define CB_IMU_CTRL9_POLL_STEP_MS 5
+#define CB_IMU_CTRL9_POLL_MAX_MS  100
+
+static esp_err_t ctrl9_command(uint8_t cmd)
+{
+    uint8_t status = 0;
+    int elapsed_ms;
+    esp_err_t err = write_reg(CB_QMI_CTRL9, cmd);
+
+    if (err != ESP_OK) {
+        return err;
+    }
+    for (elapsed_ms = 0; elapsed_ms < CB_IMU_CTRL9_POLL_MAX_MS;
+         elapsed_ms += CB_IMU_CTRL9_POLL_STEP_MS) {
+        vTaskDelay(pdMS_TO_TICKS(CB_IMU_CTRL9_POLL_STEP_MS));
+        err = read_reg(CB_QMI_STATUSINT, &status);
+        if (err != ESP_OK) {
+            return err;
+        }
+        if ((status & 0x80) != 0) {
+            ESP_LOGI(TAG, "ctrl9 cmd 0x%02X done in %d ms", (unsigned)cmd,
+                     elapsed_ms + CB_IMU_CTRL9_POLL_STEP_MS);
+            return ESP_OK;
+        }
+    }
+    ESP_LOGW(TAG, "ctrl9 cmd 0x%02X wait timeout (status 0x%02X)",
+             (unsigned)cmd, (unsigned)status);
+    return ESP_ERR_TIMEOUT;
+}
+
 esp_err_t cb_imu_init(void)
 {
     i2c_master_bus_handle_t bus;
@@ -209,6 +254,13 @@ esp_err_t cb_imu_init(void)
         goto fail_cfg;
     }
 
+    /* CTRL9: AHB clock gating host command, right after CTRL1 (hardware
+     * failure fix 2026-11-23; bounded completion wait — see ctrl9_command). */
+    err = ctrl9_command(CB_QMI_CTRL_CMD_AHB_CLOCK_GATING);
+    if (err != ESP_OK) {
+        goto fail_cfg;
+    }
+
     /* CTRL2 RMW: accel range +-8 g and the ODR choice (R21: frozen
      * masks/offsets only). */
     err = read_reg(CB_QMI_CTRL2, &reg);
@@ -255,6 +307,27 @@ esp_err_t cb_imu_init(void)
                     (uint8_t)(CB_QMI_CTRL7_ACC_EN | CB_QMI_CTRL7_GYR_EN));
     if (err != ESP_OK) {
         goto fail_cfg;
+    }
+
+    /* Permanent boot readback (one line): verify every configured register
+     * actually stuck — the evidence line for the hardware failure hunt. */
+    {
+        uint8_t c1 = 0;
+        uint8_t c2 = 0;
+        uint8_t c3 = 0;
+        uint8_t c7 = 0;
+        uint8_t c9 = 0;
+
+        (void)read_reg(CB_QMI_CTRL1, &c1);
+        (void)read_reg(CB_QMI_CTRL2, &c2);
+        (void)read_reg(CB_QMI_CTRL3, &c3);
+        (void)read_reg(CB_QMI_CTRL7, &c7);
+        (void)read_reg(CB_QMI_CTRL9, &c9);
+        ESP_LOGI(TAG,
+                 "readback ctrl1=0x%02X ctrl2=0x%02X ctrl3=0x%02X "
+                 "ctrl7=0x%02X ctrl9=0x%02X",
+                 (unsigned)c1, (unsigned)c2, (unsigned)c3, (unsigned)c7,
+                 (unsigned)c9);
     }
 
     xSemaphoreGive(s_mutex);
