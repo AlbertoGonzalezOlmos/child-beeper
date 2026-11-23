@@ -44,10 +44,11 @@ Rule (also in `AGENTS.md`): *never claim hardware-verified without a board.*
   **hardware-PENDING (needs human)**.
 - **Attached-board fast gate (2026-11-23)**: `CB_BUILD_ROOT=build/coordinator ./cb verify --fast`
   completed with **7 pass, 0 fail, 5 skip**, including 106 CLI tests.
-- **Item-3 full coordinator gate (2026-11-23, `c6447a6`)**: `CB_BUILD_ROOT=build/coordinator ./cb verify`
-  completed **12 pass, 0 fail, 2 skip** in 707.7 s. App and all three examples built; sdkconfig-assert
+- **Item-3 full coordinator gates (2026-11-23)**: round 1 at `c6447a6` completed
+  **12 pass, 0 fail, 2 skip** in 707.7 s. The round-2 gate at **`d7fabd3`** also completed
+  **12 pass, 0 fail, 2 skip**, in **129.0 s**. App and all three examples built; sdkconfig-assert
   passed all four targets; 109 CLI tests passed; the two SKIPs are the still-absent Arduino tree and
-  sketches. The coordinator's round-2 full re-run after the review fixes is **PENDING**.
+  sketches. **Round-3 final full-gate result: PENDING coordinator report after the round-3 fixes.**
 - **Item-3 serial session (2026-11-23)**: the root app printed
   `boot summary: reset=USB cb_bsp=0.2.0 init(CB_PART_ALL)=ESP_OK idf=v6.1 heap int=199763B/163332B psram=8269032B`
   and continued through `alive #7`; only I2C/IMU/SD still log `not implemented`. `02_rgb_button`
@@ -63,7 +64,7 @@ Rule (also in `AGENTS.md`): *never claim hardware-verified without a board.*
   passed all **38** host tests (`# failed 0`; the IDF-header button-poll test and stub were removed),
   `python3 -m unittest discover -s tools/tests -t . -q` passed **109** tests, `./cb verify --fast`
   completed **7 pass, 0 fail, 7 skip**, and `./cb build app 02_rgb_button 03_battery` passed all
-  three targets. The coordinator's full round-2 gate is still required.
+  three targets. The completed round-2 coordinator result is the `d7fabd3` gate above.
 
 **hardware-UNAVAILABLE (with reasons)**
 - **Early boot lines may be unobservable** on the USB-Serial/JTAG console: after a reset the native

@@ -1,10 +1,10 @@
 # Documentation index — child-beeper programming toolkit
 
-> Status: item 3 round-2 review (updated 2026-11-23). The coordinator's full gate is
-> **12 pass, 0 fail, 2 skip**; its round-2 re-run is pending. Serial evidence covers the
-> `cb_bsp=0.2.0` boot summary, RGB cap transactions, button poller and calibrated battery samples.
-> Visual/gesture/multimeter checks remain PENDING. Levels + checklist:
-> [verification.md](verification.md).
+> Status: item 3 final review (updated 2026-11-23). The completed round-2 coordinator gate at
+> `d7fabd3` is **12 pass, 0 fail, 2 skip** in **129.0 s**; the round-3 final gate is pending the
+> coordinator's report. Serial evidence covers the `cb_bsp=0.2.0` boot summary, RGB cap transactions,
+> button poller and calibrated battery samples. Visual/gesture/multimeter checks remain PENDING.
+> Levels + checklist: [verification.md](verification.md).
 
 Toolkit for the **Waveshare ESP32-S3-LCD-1.47B** (ESP32-S3R8, 16 MB flash, 8 MB octal PSRAM,
 172×320 ST7789 LCD *without touch*, QMI8658 IMU, 1× RGB LED, BOOT button, battery ADC, TF card,
@@ -70,7 +70,7 @@ arduino/                      # item 7: staged CBBoard library + sketches (absen
 | Lifecycle/version | `cb_bsp_init` | root app | item 1 | ✓ boot + console + 11 min soak (2026-11-08) |
 | Pins/math/FSM/QMI regs (pure, host-tested) | `cb_pins.h`, `cb_math`, `cb_button_fsm`, `cb_qmi8658_regs` | `tests/host` | item 1 | n/a (logic) |
 | LCD + LVGL 9.5 + backlight + pattern | `cb_lcd`, `cb_backlight`, `cb_pattern` | `01_lcd_hello` diagnostic | item 2 (2026-11-08) | ✓ serial 2026-11-23 (init, backlight hook, 12 frames); visuals PENDING |
-| RGB LED, BOOT button, battery | `cb_rgb`, `cb_button`, `cb_battery` | `02_rgb_button`, `03_battery` | **item 3 build-verified** (12 pass, 0 fail, 2 skip, 2026-11-23; round-2 targeted PASS, full re-run PENDING) | serial-verified: battery sample, RGB 20 % cap, button poller, boot summary 0.2.0; visual/multimeter/gesture PENDING (needs human) |
+| RGB LED, BOOT button, battery | `cb_rgb`, `cb_button`, `cb_battery` | `02_rgb_button`, `03_battery` | **item 3 build-verified** (round-2 `d7fabd3`: 12 pass, 0 fail, 2 skip, 129.0 s, 2026-11-23) | serial-verified: battery sample, RGB 20 % cap, button poller, boot summary 0.2.0; visual/multimeter/gesture PENDING (needs human) |
 | IMU QMI8658 (new `i2c_master`) | item 4 | `04_imu` | item 4 | ✗ |
 | TF card (SDMMC, no auto-format) | item 5 | `05_sdcard` | item 5 | ✗ |
 | Self-test + dashboard | item 6 | `06_dashboard`, `./cb selftest` | item 6 | ✗ |

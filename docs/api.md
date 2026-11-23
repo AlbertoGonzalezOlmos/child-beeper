@@ -1,10 +1,11 @@
 # BSP API reference (items 1–3 — frozen surface)
 
-> Status: item-3 API frozen by R1–R8, R1b–R12b and the R13b/R14b review fixes. The 2026-11-23
-> full gate and item-3 serial evidence are recorded in verification.md; the round-2 coordinator
-> re-run is pending. Item-2 display visuals and item-3 visual/gesture/multimeter checks remain
-> hardware-PENDING. Only the names on this page are frozen; IMU/SD driver APIs still require their
-> own item review rounds. Do not invent `cb_*` names ahead of their item.
+> Status: item-3 API frozen by R1–R8, R1b–R12b and the R13b/R14b review fixes. The completed
+> round-2 gate at `d7fabd3` is **12 pass, 0 fail, 2 skip** in **129.0 s**; the round-3 final gate
+> is pending the coordinator's report. Item-3 serial evidence is recorded in verification.md.
+> Item-2 display visuals and item-3 visual/gesture/multimeter checks remain hardware-PENDING.
+> Only the names on this page are frozen; IMU/SD driver APIs still require their own item review
+> rounds. Do not invent `cb_*` names ahead of their item.
 
 Component: `components/cb_bsp` (local IDF component). Consumers depend on it by path, e.g.
 `examples/<NN>/main/idf_component.yml`:
