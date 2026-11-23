@@ -24,6 +24,7 @@ idf_component_register(
         "src/cb_rgb_math.c"
         "src/cb_battery_math.c"
         "src/cb_imu_math.c"
+        "src/cb_i2c.c"
         "src/cb_rgb.c"
         "src/cb_button.c"
         "src/cb_battery.c"
@@ -31,6 +32,7 @@ idf_component_register(
         "include"
     REQUIRES
         esp_lcd
+        esp_driver_i2c
     PRIV_REQUIRES
         esp_driver_spi
         esp_driver_ledc
