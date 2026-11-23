@@ -90,7 +90,8 @@ _run_verify.last_output = ""  # type: ignore[attr-defined]
 class TestVerifyHappyPath(TempRepoTest):
     def setUp(self) -> None:
         super().setUp()
-        make_repo(self.root, examples=("01_lcd_hello",))
+        # Post-item-3 default tree (support.make_repo): app + 01/02/03 examples.
+        make_repo(self.root)
         os.environ["CB_FORCE_NO_PORTS"] = "1"
 
     def test_step_ids_and_order(self) -> None:
@@ -107,6 +108,8 @@ class TestVerifyHappyPath(TempRepoTest):
                 "deps-pins",
                 "build:app",
                 "build:01_lcd_hello",
+                "build:02_rgb_button",
+                "build:03_battery",
                 "sdkconfig-assert",
                 "arduino:*",
                 "guards-no-board",

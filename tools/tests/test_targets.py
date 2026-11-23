@@ -69,7 +69,10 @@ class TestDiscovery(TempRepoTest):
         make_repo(self.root, arduino=True)
         ctx = ctx_for(self.root)
         chosen = targets.resolve(ctx, ["all"])
-        self.assertEqual([t.name for t in chosen], ["app", "01_lcd_hello", "01_smoke"])
+        self.assertEqual(
+            [t.name for t in chosen],
+            ["app", "01_lcd_hello", "02_rgb_button", "03_battery", "01_smoke"],
+        )
 
 
 class TestCleanSafety(TempRepoTest):

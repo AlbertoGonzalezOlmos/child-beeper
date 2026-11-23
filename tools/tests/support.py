@@ -79,8 +79,15 @@ class FakeRunner(Runner):
         return any(needle in cmd for cmd in self.commands() for needle in needles)
 
 
-def make_repo(tmp: Path, *, app: bool = True, examples: tuple[str, ...] = ("01_lcd_hello",),
-              arduino: bool = False, host_tests: bool = True) -> Path:
+def make_repo(
+    tmp: Path,
+    *,
+    app: bool = True,
+    # Default mirrors the post-item-3 tree: three example projects (plan.md R9b).
+    examples: tuple[str, ...] = ("01_lcd_hello", "02_rgb_button", "03_battery"),
+    arduino: bool = False,
+    host_tests: bool = True,
+) -> Path:
     """Create a minimal fake repository tree (no build, no network)."""
     # deps-pins fixtures: exact pins so the happy path is green and negatives can be applied.
     lock = (
