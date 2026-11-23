@@ -10,6 +10,8 @@
 #include "cb_button_fsm.h"
 #include "cb_qmi8658_regs.h"
 #include "cb_pattern.h"
+#include "cb_rgb_math.h"
+#include "cb_battery_math.h"
 
 static int tests_run;
 static int tests_failed;
@@ -790,6 +792,103 @@ static void test_fsm_fully_polled_traces(void)
     expect_trace(&trace, slow_second, sizeof(slow_second) / sizeof(slow_second[0]));
 }
 
+static void test_rgb_dim_cap_macro(void)
+{
+    CHECK_INT(20, CB_RGB_DIM_CAP_PERCENT);
+    CHECK_INT(51, 255 * CB_RGB_DIM_CAP_PERCENT / 100);
+}
+
+/* R1b: peak-scale to the cap — unchanged at/below the cap, floor scaling
+ * above it, idempotent, NULL-safe. */
+static void test_rgb_math_dim(void)
+{
+    uint8_t r, g, b;
+    int i;
+
+    r = 255; g = 255; b = 255;
+    cb_rgb_math_dim(&r, &g, &b);
+    CHECK_INT(51, r); CHECK_INT(51, g); CHECK_INT(51, b);
+
+    r = 255; g = 128; b = 0;
+    cb_rgb_math_dim(&r, &g, &b);
+    CHECK_INT(51, r); CHECK_INT(25, g); CHECK_INT(0, b);
+
+    r = 52; g = 0; b = 0;
+    cb_rgb_math_dim(&r, &g, &b);
+    CHECK_INT(51, r); CHECK_INT(0, g); CHECK_INT(0, b);
+
+    /* At/below the cap: unchanged. */
+    r = 20; g = 10; b = 5;
+    cb_rgb_math_dim(&r, &g, &b);
+    CHECK_INT(20, r); CHECK_INT(10, g); CHECK_INT(5, b);
+    r = 1; g = 1; b = 1;
+    cb_rgb_math_dim(&r, &g, &b);
+    CHECK_INT(1, r); CHECK_INT(1, g); CHECK_INT(1, b);
+
+    /* Idempotence. */
+    r = 255; g = 254; b = 0;
+    cb_rgb_math_dim(&r, &g, &b);
+    CHECK_INT(51, r); CHECK_INT(50, g); CHECK_INT(0, b);
+    cb_rgb_math_dim(&r, &g, &b);
+    CHECK_INT(51, r); CHECK_INT(50, g); CHECK_INT(0, b);
+
+    /* Every output stays at/below the cap. */
+    for (i = 0; i <= 255; ++i) {
+        r = (uint8_t)i;
+        g = (uint8_t)((i * 3) % 256);
+        b = (uint8_t)((i * 7) % 256);
+        cb_rgb_math_dim(&r, &g, &b);
+        CHECK(r <= 51); CHECK(g <= 51); CHECK(b <= 51);
+    }
+
+    /* NULL pointers: no crash, no write. */
+    r = 200; g = 100; b = 50;
+    cb_rgb_math_dim(NULL, &g, &b);
+    CHECK_INT(200, r); CHECK_INT(100, g); CHECK_INT(50, b);
+    cb_rgb_math_dim(&r, NULL, &b);
+    CHECK_INT(200, r); CHECK_INT(50, b);
+    cb_rgb_math_dim(&r, &g, NULL);
+    CHECK_INT(200, r); CHECK_INT(100, g);
+    cb_rgb_math_dim(NULL, NULL, NULL);
+}
+
+static void test_battery_macro_contract(void)
+{
+    CHECK_INT(3, CB_BAT_DIVIDER_NUM);
+    CHECK_INT(1, CB_BAT_DIVIDER_DEN);
+    CHECK_INT(700, CB_BAT_CAL_GAIN_NUM);
+    CHECK_INT(695, CB_BAT_CAL_GAIN_DEN);
+    CHECK_INT(2500, CB_BAT_PLAUSIBLE_MIN_MV);
+    CHECK_INT(4500, CB_BAT_PLAUSIBLE_MAX_MV);
+}
+
+/* R6: int64 intermediates, negative -> 0, truncating, INT32_MAX saturation. */
+static void test_battery_math_conversion(void)
+{
+    CHECK_INT(0, cb_battery_math_mv_from_pin_mv(0));
+    CHECK_INT(0, cb_battery_math_mv_from_pin_mv(-1));
+    CHECK_INT(0, cb_battery_math_mv_from_pin_mv(INT32_MIN));
+    CHECK_INT(2100, cb_battery_math_mv_from_pin_mv(695));
+    CHECK_INT(3021, cb_battery_math_mv_from_pin_mv(1000));
+    CHECK_INT(6345, cb_battery_math_mv_from_pin_mv(2100));
+    CHECK_INT(9971, cb_battery_math_mv_from_pin_mv(3300));
+    CHECK_INT(4027, cb_battery_math_mv_from_pin_mv(1333));
+    CHECK_INT(12373, cb_battery_math_mv_from_pin_mv(4095));
+    CHECK_INT(INT32_MAX, cb_battery_math_mv_from_pin_mv(INT32_MAX));
+}
+
+/* R5: inclusive window [2500, 4500]. */
+static void test_battery_math_plausible(void)
+{
+    CHECK(!cb_battery_math_plausible(2499));
+    CHECK(cb_battery_math_plausible(2500));
+    CHECK(cb_battery_math_plausible(3500));
+    CHECK(cb_battery_math_plausible(4500));
+    CHECK(!cb_battery_math_plausible(4501));
+    CHECK(!cb_battery_math_plausible(0));
+    CHECK(!cb_battery_math_plausible(-1));
+}
+
 int main(void)
 {
     run_test(test_pins_lcd, "pins LCD and RGB contract");
@@ -825,6 +924,11 @@ int main(void)
     run_test(test_pattern_ramp, "pattern grey ramp endpoints and rows");
     run_test(test_pattern_stride_and_endian, "pattern packed stride, guards and endian");
     run_test(test_pattern_odd_geometry, "pattern odd-size geometry");
+    run_test(test_rgb_dim_cap_macro, "rgb dim cap percent contract");
+    run_test(test_rgb_math_dim, "rgb dim peak-scale, idempotence and NULL safety");
+    run_test(test_battery_macro_contract, "battery divider/gain/window macro contract");
+    run_test(test_battery_math_conversion, "battery mV conversion, clamp and saturation");
+    run_test(test_battery_math_plausible, "battery plausibility inclusive bounds");
 
     printf("1..%d\n", tests_run);
     printf("# failed %d\n", tests_failed);

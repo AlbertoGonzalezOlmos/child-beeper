@@ -1,6 +1,6 @@
 # Flashing & monitor — native USB-Serial/JTAG
 
-> Status (updated 2026-11-08): flashing and monitoring are **hardware-verified** on
+> Status (updated 2026-11-23): flashing and monitoring are **hardware-verified** on
 > `/dev/ttyACM0` (`./cb flash --target app`, live `./cb monitor`, ~11 min heartbeat soak); the
 > guard is verified via `CB_FORCE_NO_PORTS=1`; the **BOOT+RESET recovery drill is still pending**
 > (needs a physical press). Checklist: [verification.md](verification.md).
@@ -37,12 +37,14 @@ Arduino uploads go through `./cb arduino` / the IDE with the same FQBN (item 7+)
 
 ### What you will (and will not) see on the console
 
-- After every reset the native USB peripheral **re-enumerates** and the host re-attaches ~1 s
-  later, so ROM/bootstrap/bootloader output and the app's early banner/WARN lines are **dropped**
-  — inherent to USB-Serial/JTAG, not a firmware bug (measured 2026-11-08).
-- The root app compensates with a **one-shot boot summary on its first heartbeat**:
-  `boot summary: reset=… cb_bsp=… init(CB_PART_ALL)=… idf=…`. Watch for that line instead of the
-  true early boot log.
+- After every reset the native USB peripheral **re-enumerates** and host attachment is
+  timing-dependent, so ROM/bootstrap/bootloader output and the app's early banner/WARN lines
+  **may be dropped**. On 2026-11-23 the monitor captured the `I (683)` banner and `W (684…)`
+  warnings, proving that early output is not categorically lost.
+- The root app provides a reliable **one-shot boot summary on its first heartbeat**:
+  `boot summary: reset=… cb_bsp=… init(CB_PART_ALL)=… idf=…`. Use that line when early output is
+  absent. Item 3's examples print ready immediately (no artificial delay); their repeating
+  cycle/sample/alive lines provide later evidence if ready is missed.
 - `./cb monitor` streams live (`cb: monitoring — press Ctrl-] to quit`; it warns when stdin is not
   a terminal, because then Ctrl-] may not reach the monitor). A raw `cat /dev/ttyACM0` shows the
   same stream (heartbeats every 2 s). `--target <T>` selects which build dir's ELF the monitor

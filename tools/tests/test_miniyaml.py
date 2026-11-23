@@ -66,7 +66,12 @@ class TestMiniYaml(unittest.TestCase):
         from pathlib import Path
 
         root = Path(__file__).resolve().parents[2]
-        for rel in ("dependencies.lock", "examples/01_lcd_hello/dependencies.lock"):
+        for rel in (
+            "dependencies.lock",
+            "examples/01_lcd_hello/dependencies.lock",
+            "examples/02_rgb_button/dependencies.lock",
+            "examples/03_battery/dependencies.lock",
+        ):
             path = root / rel
             if not path.is_file():
                 continue

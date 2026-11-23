@@ -23,7 +23,10 @@
 #include <stddef.h>
 
 #include "cb_backlight.h"
+#include "cb_battery.h"
+#include "cb_button.h"
 #include "cb_lcd.h"
+#include "cb_rgb.h"
 #include "esp_log.h"
 
 static const char *TAG = "cb_bsp";
@@ -40,11 +43,11 @@ typedef struct {
 /* Frozen init order — never reorder. */
 static const cb_part_desc_t k_parts[] = {
     { "BACKLIGHT", CB_PART_BACKLIGHT, false, cb_backlight_init },
-    { "RGB",       CB_PART_RGB,       false, NULL },
+    { "RGB",       CB_PART_RGB,       false, cb_rgb_init },
     { "I2C",       CB_PART_I2C,       false, NULL },
     { "IMU",       CB_PART_IMU,       false, NULL },
-    { "BUTTON",    CB_PART_BUTTON,    false, NULL },
-    { "BATTERY",   CB_PART_BATTERY,   false, NULL },
+    { "BUTTON",    CB_PART_BUTTON,    false, cb_button_init },
+    { "BATTERY",   CB_PART_BATTERY,   false, cb_battery_init },
     { "LCD",       CB_PART_LCD,       true,  cb_lcd_init },
     { "LVGL",      CB_PART_LVGL,      true,  cb_lcd_init_lvgl },
     { "SD",        CB_PART_SD,        false, NULL },

@@ -90,7 +90,8 @@ _run_verify.last_output = ""  # type: ignore[attr-defined]
 class TestVerifyHappyPath(TempRepoTest):
     def setUp(self) -> None:
         super().setUp()
-        make_repo(self.root, examples=("01_lcd_hello",))
+        # Post-item-3 default tree (support.make_repo): app + 01/02/03 examples.
+        make_repo(self.root)
         os.environ["CB_FORCE_NO_PORTS"] = "1"
 
     def test_step_ids_and_order(self) -> None:
@@ -107,6 +108,8 @@ class TestVerifyHappyPath(TempRepoTest):
                 "deps-pins",
                 "build:app",
                 "build:01_lcd_hello",
+                "build:02_rgb_button",
+                "build:03_battery",
                 "sdkconfig-assert",
                 "arduino:*",
                 "guards-no-board",
@@ -221,6 +224,29 @@ class TestVerifyFailures(TempRepoTest):
         code, results, _ = _run_verify(self.root)
         by_id = {r.id: r for r in results}
         self.assertEqual(by_id["build:01_lcd_hello"].status, "FAIL")
+        self.assertEqual(code, 1)
+
+    def test_missing_item3_examples_fail(self) -> None:
+        make_repo(self.root, examples=("01_lcd_hello",))
+        code, results, _ = _run_verify(self.root)
+        by_id = {r.id: r for r in results}
+        self.assertEqual(by_id["build:02_rgb_button"].status, "FAIL")
+        self.assertEqual(
+            by_id["build:02_rgb_button"].detail,
+            "examples/02_rgb_button missing (CMakeLists.txt not found)",
+        )
+        self.assertEqual(by_id["build:03_battery"].status, "FAIL")
+        self.assertEqual(
+            by_id["build:03_battery"].detail,
+            "examples/03_battery missing (CMakeLists.txt not found)",
+        )
+        self.assertEqual(code, 1)
+
+    def test_fast_mode_still_fails_without_item3_examples(self) -> None:
+        make_repo(self.root, examples=("01_lcd_hello",))
+        code, results, _ = _run_verify(self.root, fast=True)
+        by_id = {r.id: r for r in results}
+        self.assertEqual(by_id["build:02_rgb_button"].status, "FAIL")
         self.assertEqual(code, 1)
 
     def test_missing_host_tests_fails_per_ruling_r6(self) -> None:

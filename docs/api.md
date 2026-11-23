@@ -1,9 +1,11 @@
-# BSP API reference (items 1–2 — frozen surface)
+# BSP API reference (items 1–3 — frozen surface)
 
-> Status: build-verified (item 2, display stack); runtime behaviour is **not hardware-verified**
-> until the orchestrator's flash session — see [verification.md](verification.md). Only the names
-> on this page are frozen (item-1 contract + item-2 rulings A1–A10); driver APIs for RGB/IMU/SD
-> are added in items 3–6 via review rounds. Do not invent `cb_*` names ahead of their item.
+> Status: item-3 API frozen by R1–R8, R1b–R12b and the R13b/R14b review fixes. The completed
+> round-2 gate at `d7fabd3` is **12 pass, 0 fail, 2 skip** in **129.0 s**; the round-3 final gate
+> is pending the coordinator's report. Item-3 serial evidence is recorded in verification.md.
+> Item-2 display visuals and item-3 visual/gesture/multimeter checks remain hardware-PENDING.
+> Only the names on this page are frozen; IMU/SD driver APIs still require their own item review
+> rounds. Do not invent `cb_*` names ahead of their item.
 
 Component: `components/cb_bsp` (local IDF component). Consumers depend on it by path, e.g.
 `examples/<NN>/main/idf_component.yml`:
@@ -23,7 +25,7 @@ Headers are flat: `#include "cb_bsp.h"`, `#include "cb_pins.h"`, … (the compon
 
 ```c
 #define CB_BSP_VERSION_MAJOR 0
-#define CB_BSP_VERSION_MINOR 1
+#define CB_BSP_VERSION_MINOR 2
 #define CB_BSP_VERSION_PATCH 0
 
 typedef enum {
@@ -41,7 +43,7 @@ typedef enum {
 } cb_part_t;
 
 esp_err_t cb_bsp_init(uint32_t parts);   /* inits only the requested parts, in fixed order */
-const char *cb_bsp_version(void);        /* "0.1.0" */
+const char *cb_bsp_version(void);        /* "0.2.0" */
 ```
 
 **Fixed init order:** BACKLIGHT → RGB → I2C → IMU → BUTTON → BATTERY → LCD → LVGL → SD
@@ -214,9 +216,168 @@ then four **2×2 corner markers** drawn last (TL red `0xF800`, TR yellow `0xFFE0
   panel only); `CB_PART_LVGL` → `cb_lcd_init_lvgl` (strict, adds the LVGL port; requires LCD).
   Order and strict/optional policy unchanged.
 - **From item 2, `cb_bsp_init(CB_PART_ALL)` returns `ESP_OK` on a good board** (A6): the strict
-  parts are implemented; RGB/I2C/IMU/BUTTON/BATTERY/SD still log WARN `not implemented`.
+  parts are implemented. In that historical item-2 state RGB/I2C/IMU/BUTTON/BATTERY/SD still logged
+  WARN `not implemented`; item 3 removes RGB/BUTTON/BATTERY from that list, leaving I2C/IMU/SD for
+  items 4/5.
 - Idempotency (brief ruling 3): a second call logs “already initialized” per part and returns
   `ESP_OK`; failed parts are not marked, so a later call retries them.
+
+## RGB, button and battery (item 3 — R1–R8, R1b–R12b)
+
+### `cb_rgb_math.h` — pure hue-preserving peak cap
+
+```c
+#include <stdint.h>
+#define CB_RGB_DIM_CAP_PERCENT 20
+void cb_rgb_math_dim(uint8_t *r, uint8_t *g, uint8_t *b);
+```
+
+The helper has no IDF includes and has `extern "C"` guards for the item-7 Arduino mirror. If any
+pointer is NULL it returns without writing anything. Otherwise read all three inputs, compute
+`peak=max(r,g,b)` and `cap=255*CB_RGB_DIM_CAP_PERCENT/100` (**51**). If `peak<=cap`, leave all values
+unchanged. Otherwise replace each channel with `(uint32_t)channel*cap/peak` (floor), using the
+original channels for every calculation. This is a cap, not uniform percent scaling, and it is
+idempotent. Required vectors include `(255,255,255)->(51,51,51)`, `(255,128,0)->(51,25,0)`,
+`(52,0,0)->(51,0,0)`, `(20,10,5)` and `(1,1,1)` unchanged, and `dim(dim(x))==dim(x)`.
+
+### `cb_rgb.h` — one WS2812-compatible pixel
+
+```c
+#include "esp_err.h"
+#include <stdint.h>
+esp_err_t cb_rgb_init(void);
+esp_err_t cb_rgb_set(uint8_t r, uint8_t g, uint8_t b);
+esp_err_t cb_rgb_off(void);
+```
+
+- Init creates the led_strip 3.1.1 RMT device and its mutex. The exact configuration fields are
+  `.strip_gpio_num=CB_PIN_RGB`, `.max_leds=1`, `.led_model=LED_MODEL_WS2812`, and
+  `.color_component_format=LED_STRIP_COLOR_COMPONENT_FMT_GRB`; RMT uses `RMT_CLK_SRC_DEFAULT` at
+  **10 MHz** (`.mem_block_symbols=64`, DMA disabled). Init clears the pixel through the same
+  set+refresh path as `cb_rgb_off()` so the LED is
+  deterministically off at boot, then logs `I cb_rgb: rmt up gpio38, cap 20%`.
+- Init is idempotent. Partial failure releases any acquired device/mutex (`led_strip_del()` and
+  `vSemaphoreDelete()`), leaves no initialized state, returns the first error, and permits retry.
+- Set applies `cb_rgb_math_dim` to local channels. `cb_rgb_off()` is exactly `cb_rgb_set(0,0,0)`.
+  Before successful init both return `ESP_ERR_INVALID_STATE`; that pre-init WARN is one-shot and is
+  re-armed by a later successful init. The mutex covers `led_strip_set_pixel()` +
+  `led_strip_refresh()` and is taken with a **100 ms** timeout; timeout returns `ESP_ERR_TIMEOUT` and
+  logs at most once per second. Set-failure WARNs are also limited to 1 Hz. Rate-limit and one-shot
+  state is checked/updated inside a critical section, while the log call itself happens outside it.
+  The first driver error is returned and the mutex is always released. No getter, clear variant,
+  uncapped bypass, or driver handle is public. RGB calls are task-context only and must not be made
+  while holding `cb_lcd_lvgl_lock()`.
+
+### `cb_button.h` — BOOT GPIO wrapper over the frozen FSM
+
+```c
+#include "cb_button_fsm.h"
+#include "esp_err.h"
+#define CB_BUTTON_POLL_MS 10
+typedef void (*cb_button_cb_t)(cb_btn_event_t event, void *user);
+esp_err_t cb_button_init(void);
+esp_err_t cb_button_set_callback(cb_button_cb_t cb, void *user);
+```
+
+- Init configures GPIO0 with `gpio_config()` as `GPIO_MODE_INPUT`, pull-up enabled, pull-down and
+  interrupts disabled. It is never driven as an output. It initialises the existing `cb_btn_fsm_t`,
+  creates one `ESP_TIMER_TASK` esp_timer, and starts it periodically at **10,000 µs**. GPIO/timer
+  failure returns the error and cleans up any created timer; successful init is idempotent.
+- Each poll reads `gpio_get_level(CB_PIN_BOOT_BTN)`, inverts the active-low level, and calls
+  `cb_btn_fsm_update()` with `(uint32_t)(esp_timer_get_time()/1000ULL)`. Init seeds the resting
+  level once before starting the timer; thereafter only the timer callback mutates the FSM. The
+  frozen deferred-CLICK/LONG_PRESS semantics above are unchanged.
+- `cb_button_set_callback()` **always stores the callback/user pair and returns `ESP_OK`**, before or
+  after init and even when the button part is down; NULL disables delivery. Pair replacement and the
+  callback+user snapshot take place inside a critical section. The callback itself is invoked
+  **outside** that critical section in esp_timer task context (never ISR). It must return promptly;
+  queue SD, RGB sequences, LVGL, or other blocking work to the application task. There is no deinit,
+  pressed getter, or second debounce implementation.
+
+### `cb_battery_math.h` — pure conversion and plausibility
+
+```c
+#include <stdbool.h>
+#include <stdint.h>
+#define CB_BAT_PLAUSIBLE_MIN_MV 2500
+#define CB_BAT_PLAUSIBLE_MAX_MV 4500
+int32_t cb_battery_math_mv_from_pin_mv(int32_t pin_mv);
+bool cb_battery_math_plausible(int32_t battery_mv);
+```
+
+For nonpositive input the conversion returns zero. Otherwise it uses an **int64** intermediate:
+
+```text
+battery_mv = pin_mv * CB_BAT_DIVIDER_NUM * CB_BAT_CAL_GAIN_NUM
+             / (CB_BAT_DIVIDER_DEN * CB_BAT_CAL_GAIN_DEN)
+```
+
+The result is truncating integer **millivolts**, with no `/1000`, and saturates at `INT32_MAX`.
+Exact host vectors include `695→2100`, `1000→3021`, `1333→4027`, and `4095→12373`.
+Plausibility is inclusive:
+`battery_mv>=2500 && battery_mv<=4500`. It is only a heuristic for the no-cell warning, never a
+fuel-gauge percentage or proof that a cell is present.
+
+### `cb_battery.h` — ADC1 oneshot sample
+
+```c
+#include "esp_err.h"
+#include <stdbool.h>
+#include <stdint.h>
+typedef struct {
+    int raw;
+    int32_t pin_mv;
+    int32_t battery_mv;
+    bool calibrated;
+    bool plausible;
+} cb_battery_sample_t;
+esp_err_t cb_battery_init(void);
+esp_err_t cb_battery_read(cb_battery_sample_t *out);
+```
+
+- Init binds `CB_BAT_ADC_UNIT`/`CB_BAT_ADC_CHANNEL` to `ADC_UNIT_1`/`ADC_CHANNEL_0` with static
+  assertions, then calls `adc_oneshot_new_unit()` and `adc_oneshot_config_channel()` with
+  `ADC_ATTEN_DB_12`, `ADC_BITWIDTH_12`, `ADC_DIGI_CLK_SRC_DEFAULT`, and `ADC_ULP_MODE_DISABLE`.
+  Unit/channel failure deletes any acquired unit, returns the first error, and permits retry;
+  successful init is idempotent.
+- ESP32-S3 calibration uses **curve fitting only**: `adc_cali_curve_fitting_config_t` (including
+  `.chan=ADC_CHANNEL_0`) and `adc_cali_create_scheme_curve_fitting()`. Calibration creation failure
+  logs one WARN and falls back to `cb_math_adc_raw_to_mv()` without discarding a working ADC.
+- `cb_battery_read(NULL)` returns `ESP_ERR_INVALID_ARG`; pre-init returns `ESP_ERR_INVALID_STATE`
+  and emits its pre-init WARN only once (re-armed by successful init). A successful read obtains raw
+  ADC data with `adc_oneshot_read()`, then either `adc_cali_raw_to_voltage()` or the frozen raw
+  fallback, and fills all five fields from that one sample; `out` is untouched on driver error.
+  Reads are serialized by an internal mutex with a 100 ms bound (`ESP_ERR_TIMEOUT` on timeout);
+  the busy WARN is limited to 1 Hz and its last-log state is updated under a critical section. An
+  implausible result still returns `ESP_OK` with `plausible=false`.
+- The **driver owns plausibility transitions**, not per-read data output. The transition decision
+  and `s_warned_implausible` update occur inside the read mutex so concurrent sample state cannot be
+  reordered. On transition to implausible it logs
+  `W cb_battery: implausible %ld mV (no cell inserted?)`; on recovery it logs
+  `I cb_battery: reading plausible again`. Stable polling cannot repeat these messages. Examples
+  own their own periodic sample lines; the driver prints no per-read data line.
+
+### `cb_bsp_init` deltas (item 3)
+
+- `CB_PART_RGB` → `cb_rgb_init`, `CB_PART_BUTTON` → `cb_button_init`, and
+  `CB_PART_BATTERY` → `cb_battery_init`, in the existing fixed positions. All remain optional:
+  failures WARN and are suppressed; `k_parts[]` order and the `CB_PART_ALL` assertions are
+  unchanged.
+- `CB_BSP_VERSION_MAJOR/MINOR/PATCH` are **0/2/0**, so `cb_bsp_version()` returns `"0.2.0"`.
+  The root app source is unchanged in item 3: no `bat=`/`rgb=` heartbeat keys and no root button
+  handler. Its existing first-heartbeat summary should contain
+  `cb_bsp=0.2.0 init(CB_PART_ALL)=ESP_OK` when the strict LCD/LVGL parts succeed; that line is not
+  proof of optional RGB/button/battery health.
+- After item 3 only I2C, IMU and SD remain requested-but-not-yet-implemented parts. Every repeated
+  warning path added by item 3 is one-shot, transition-gated, or rate-limited to **≤1 Hz** (R14b),
+  with race-free last-log state. In particular, the RGB example logs
+  `W rgb_button: cycle %u failed: %s` only on the first failure of a failure streak and clears its
+  error-active flag on the next successful cycle.
+- **R13b battery diagnostic addition:** on a `cb_battery_read` error, `03_battery` emits exactly
+  `W battery: read failed: %s` once, substituting `esp_err_to_name(err)`, then stops polling. Its
+  normal sample line remains `battery: raw=%d pin_mv=%ld battery_mv=%ld calibrated=%d plausible=%d`
+  every 2 s and `battery: alive #%u` continues every 5 s, so a dead ADC is distinguishable from a
+  wedged app. This failure path has not been hardware-injected; it is a code/build contract only.
 
 ## Threading / LVGL rules
 

@@ -1,8 +1,10 @@
 # Documentation index — child-beeper programming toolkit
 
-> Status: item 1 (updated 2026-11-08, board attached). The toolkit is build-verified; flash,
-> console and an ~11-minute app soak are **hardware-verified** — everything else is still
-> build-verified only. Levels + checklist: [verification.md](verification.md).
+> Status: item 3 final review (updated 2026-11-23). The completed round-2 coordinator gate at
+> `d7fabd3` is **12 pass, 0 fail, 2 skip** in **129.0 s**; the round-3 final gate is pending the
+> coordinator's report. Serial evidence covers the `cb_bsp=0.2.0` boot summary, RGB cap transactions,
+> button poller and calibrated battery samples. Visual/gesture/multimeter checks remain PENDING.
+> Levels + checklist: [verification.md](verification.md).
 
 Toolkit for the **Waveshare ESP32-S3-LCD-1.47B** (ESP32-S3R8, 16 MB flash, 8 MB octal PSRAM,
 172×320 ST7789 LCD *without touch*, QMI8658 IMU, 1× RGB LED, BOOT button, battery ADC, TF card,
@@ -49,9 +51,12 @@ With a board attached (first session done 2026-11-08 — checklist in
 cb                            # bash shim → tools/cb.py (Python 3 stdlib CLI)
 CMakeLists.txt  main/         # root IDF app ("hello beeper")
 components/cb_bsp/            # the BSP: CMakeLists, include/ (frozen headers), src/
-                              #   item 2 adds cb_lcd, cb_backlight, cb_pattern
+                              #   item 2: cb_lcd/cb_backlight/cb_pattern
+                              #   item 3: cb_rgb/cb_button/cb_battery + pure math
 config/                       # sdkconfig.board.defaults + partitions.csv (3M factory, 8M FAT)
 examples/01_lcd_hello/        # canonical example pattern; item 2: display diagnostic app
+examples/02_rgb_button/       # item 3: capped RGB + BOOT-button events
+examples/03_battery/          # item 3: calibrated/fallback battery samples
 tests/host/                   # host-compiled unit tests (pins, math, button FSM)
 tools/                        # cb.py + cbchecks/ (verify pipeline, static audits)
 docs/                         # this directory
@@ -64,8 +69,8 @@ arduino/                      # item 7: staged CBBoard library + sketches (absen
 |---|---|---|---|---|
 | Lifecycle/version | `cb_bsp_init` | root app | item 1 | ✓ boot + console + 11 min soak (2026-11-08) |
 | Pins/math/FSM/QMI regs (pure, host-tested) | `cb_pins.h`, `cb_math`, `cb_button_fsm`, `cb_qmi8658_regs` | `tests/host` | item 1 | n/a (logic) |
-| LCD + LVGL 9.5 + backlight + pattern | `cb_lcd`, `cb_backlight`, `cb_pattern` | `01_lcd_hello` diagnostic | item 2 (2026-11-08) | ✗ pending orchestrator flash |
-| RGB LED, BOOT button, battery | item 3 | `02_rgb_button`, `03_battery` | item 3 | ✗ |
+| LCD + LVGL 9.5 + backlight + pattern | `cb_lcd`, `cb_backlight`, `cb_pattern` | `01_lcd_hello` diagnostic | item 2 (2026-11-08) | ✓ serial 2026-11-23 (init, backlight hook, 12 frames); visuals PENDING |
+| RGB LED, BOOT button, battery | `cb_rgb`, `cb_button`, `cb_battery` | `02_rgb_button`, `03_battery` | **item 3 build-verified** (round-2 `d7fabd3`: 12 pass, 0 fail, 2 skip, 129.0 s, 2026-11-23) | serial-verified: battery sample, RGB 20 % cap, button poller, boot summary 0.2.0; visual/multimeter/gesture PENDING (needs human) |
 | IMU QMI8658 (new `i2c_master`) | item 4 | `04_imu` | item 4 | ✗ |
 | TF card (SDMMC, no auto-format) | item 5 | `05_sdcard` | item 5 | ✗ |
 | Self-test + dashboard | item 6 | `06_dashboard`, `./cb selftest` | item 6 | ✗ |
