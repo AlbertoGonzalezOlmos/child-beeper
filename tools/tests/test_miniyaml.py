@@ -72,6 +72,7 @@ class TestMiniYaml(unittest.TestCase):
             "examples/02_rgb_button/dependencies.lock",
             "examples/03_battery/dependencies.lock",
             "examples/04_imu/dependencies.lock",
+            "examples/05_sdcard/dependencies.lock",
         ):
             path = root / rel
             if not path.is_file():

@@ -83,8 +83,14 @@ def make_repo(
     tmp: Path,
     *,
     app: bool = True,
-    # Default mirrors the post-item-4 tree: four example projects (plan.md R25).
-    examples: tuple[str, ...] = ("01_lcd_hello", "02_rgb_button", "03_battery", "04_imu"),
+    # Default mirrors the post-item-5 tree: five example projects (ITEM5-BRIEF scope).
+    examples: tuple[str, ...] = (
+        "01_lcd_hello",
+        "02_rgb_button",
+        "03_battery",
+        "04_imu",
+        "05_sdcard",
+    ),
     arduino: bool = False,
     host_tests: bool = True,
 ) -> Path:
