@@ -2,7 +2,7 @@
 
 > Status: item 3 build-verified (12 pass, 0 fail, 2 skip on 2026-11-23), with item-2 display and
 > item-3 `cb_bsp=0.2.0`, RGB cap, button-poller and calibrated-battery serial evidence. Item-4's
-> full coordinator gate remains pending; its 2026-11-23 IMU serial result is recorded. Measured
+> measured full gate is **13 pass, 0 fail, 2 skip**; its 2026-11-23 IMU serial result is recorded. Measured
 > facts come from the vendor demo, this toolchain and dated serial captures, not wiki prose. Symptoms
 > marked *(hardware)* can only be confirmed on the board — see [verification.md](verification.md).
 

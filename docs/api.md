@@ -1,8 +1,9 @@
 # BSP API reference (items 1–4 — frozen surface)
 
 > Status: item-4 API frozen by R9–R13 and R14–R27, with the measured `a05fded` init fixes below;
-> its full gate remains pending the coordinator. The 2026-11-23 IMU serial capture is recorded in
-> verification.md; motion response and accuracy/bias calibration remain PENDING. Item 3 is
+> its measured full gate is **13 pass, 0 fail, 2 skip** on the item-4 tip. The 2026-11-23 IMU
+> serial capture is recorded in verification.md; motion response and accuracy/bias calibration
+> remain PENDING. Item 3 is
 > build-verified and its RGB/button/battery serial evidence is recorded in verification.md. Only
 > the names on this page are frozen; the SD driver API still requires its own item review round. Do not invent `cb_*` names ahead of their item.
 
@@ -364,11 +365,12 @@ esp_err_t cb_battery_read(cb_battery_sample_t *out);
   `CB_PART_BATTERY` → `cb_battery_init`, in the existing fixed positions. All remain optional:
   failures WARN and are suppressed; `k_parts[]` order and the `CB_PART_ALL` assertions are
   unchanged.
-- `CB_BSP_VERSION_MAJOR/MINOR/PATCH` are **0/2/0**, so `cb_bsp_version()` returns `"0.2.0"`.
-  The root app source is unchanged in item 3: no `bat=`/`rgb=` heartbeat keys and no root button
-  handler. Its existing first-heartbeat summary should contain
-  `cb_bsp=0.2.0 init(CB_PART_ALL)=ESP_OK` when the strict LCD/LVGL parts succeed; that line is not
-  proof of optional RGB/button/battery health.
+- In item 3, `CB_BSP_VERSION_MAJOR/MINOR/PATCH` were **0/2/0**, so `cb_bsp_version()` returned
+  `"0.2.0"`. The root app source remained unchanged: no `bat=`/`rgb=` heartbeat keys and no root
+  button handler. The item-3 first-heartbeat summary contained
+  `cb_bsp=0.2.0 init(CB_PART_ALL)=ESP_OK` when the strict LCD/LVGL parts succeeded; the current
+  item-4 expectation is `cb_bsp=0.3.0 init(CB_PART_ALL)=ESP_OK`. Neither line proves optional-part
+  health.
 - After item 3, I2C, IMU and SD remain requested-but-not-yet-implemented parts. Item 4 removes
   I2C/IMU from that list, leaving only SD for item 5. Every repeated warning path added by item 3
   is one-shot, transition-gated, or rate-limited to **≤1 Hz** (R14b),

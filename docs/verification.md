@@ -3,7 +3,8 @@
 > Status (updated for item 4): item 3 is **build-verified** (12 pass, 0 fail, 2 skip), with
 > item-2 display and item-3 `cb_bsp=0.2.0`, RGB cap, button-poller and calibrated-battery serial
 > checks **hardware-verified**. Item-4's `04_imu` serial half is **hardware-verified 2026-11-23**;
-> its full coordinator gate and root 0.3.0 capture remain **PENDING**. Display/LED visuals, button
+> its full gate is **13 pass, 0 fail, 2 skip**; only the root 0.3.0 capture remains **PENDING**.
+> Display/LED visuals, button
 > gestures, multimeter accuracy and IMU motion response/accuracy/bias calibration remain PENDING
 > (needs human). Details and dates follow.
 
@@ -58,7 +59,9 @@ Rule (also in `AGENTS.md`): *never claim hardware-verified without a board.*
   `cycle 9` and `alive #3`. `03_battery` printed `cb_battery: adc up, cali curve` and stable
   `calibrated=1 plausible=1` samples. Exact quoted lines are in checklist 7 below. LED visuals,
   button gestures, multimeter accuracy and physical cell presence remain **PENDING (needs human)**.
-- **Item-4 gate/serial status**: the full coordinator gate and `cb_bsp=0.3.0` root summary remain
+- **Item-4 gate/serial status**: the full gate on the item-4 tip completed **13 pass, 0 fail,
+  2 skip**; app and all four examples built, sdkconfig-assert passed all **five** targets, host
+  tests passed **47**, and CLI tests passed **112**. The `cb_bsp=0.3.0` root summary remains
   **PENDING**. The 2026-11-23 `04_imu` capture is a **serial-half PASS**: 0x6B answered after 0x6A
   was silent, WHO_AM_I was 0x05, revision was 0x7C, and stable decoded samples gave 0.99 g magnitude
   with approximately 31 °C temperature. Hardware also resolved ADDR_AI as **0x40** and established
