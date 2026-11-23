@@ -1,0 +1,15 @@
+# 02_rgb_button — RGB LED + BOOT button diagnostic (toolkit item 3).
+# CANONICAL EXAMPLE PATTERN (copy of examples/01_lcd_hello/CMakeLists.txt):
+#   1. two SDKCONFIG_DEFAULTS entries BEFORE include(project.cmake): the shared
+#      board defaults, then this project's own main/sdkconfig.defaults (which
+#      sets the project-relative partition CSV path);
+#   2. main/idf_component.yml pulls cb_bsp via a MANIFEST-RELATIVE path —
+#      three ups from examples/<NN>/main/: ../../../components/cb_bsp;
+#   3. plain `idf.py -B <dir> build` inside this dir works with no -D flags
+#      (the target comes from the shared board defaults).
+cmake_minimum_required(VERSION 3.16)
+set(SDKCONFIG_DEFAULTS
+    "${CMAKE_CURRENT_LIST_DIR}/../../config/sdkconfig.board.defaults"
+    "${CMAKE_CURRENT_LIST_DIR}/main/sdkconfig.defaults")
+include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+project(02_rgb_button)
