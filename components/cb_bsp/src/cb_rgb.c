@@ -28,11 +28,13 @@ static SemaphoreHandle_t s_mutex;    /* NULL until init succeeded */
 /* R14b: gated-WARN state, shared by several tasks — every check-and-update
  * happens under s_log_lock; the caller logs outside it. */
 static portMUX_TYPE s_log_lock = portMUX_INITIALIZER_UNLOCKED;
-static TickType_t s_last_busy_log;      /* busy-mutex WARN, at most 1/s */
-static TickType_t s_last_set_fail_log;  /* set-failed WARN, at most 1/s */
+static TickType_t s_last_busy_log = (TickType_t)-1000;     /* busy-mutex WARN, at most 1/s */
+static TickType_t s_last_set_fail_log = (TickType_t)-1000; /* set-failed WARN, at most 1/s */
 static bool s_warned_no_init;           /* pre-init WARN, one-shot */
 
-/* Rate limit (≤1 Hz): decide under the lock, log outside it. */
+/* Rate limit (≤1 Hz): decide under the lock, log outside it. The s_last_*
+ * timestamps start at (TickType_t)-1000 so the FIRST event always logs
+ * (wrap-safe: now - (TickType_t)-1000 == now + 1000, always ≥ 1000). */
 static bool rate_limited(TickType_t *last)
 {
     TickType_t now = xTaskGetTickCount();

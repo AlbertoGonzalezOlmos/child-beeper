@@ -34,11 +34,13 @@ static SemaphoreHandle_t s_mutex;         /* NULL until init succeeded */
  * transition gate and is only ever touched while holding s_mutex (see
  * cb_battery_read). */
 static portMUX_TYPE s_log_lock = portMUX_INITIALIZER_UNLOCKED;
-static TickType_t s_last_busy_log;        /* busy-mutex WARN, at most 1/s */
+static TickType_t s_last_busy_log = (TickType_t)-1000;   /* busy-mutex WARN, at most 1/s */
 static bool s_warned_no_init;             /* pre-init WARN, one-shot */
 static bool s_warned_implausible;         /* R6b transition gate (guarded by s_mutex) */
 
-/* Rate limit (≤1 Hz): decide under the lock, log outside it. */
+/* Rate limit (≤1 Hz): decide under the lock, log outside it. The s_last_*
+ * timestamp starts at (TickType_t)-1000 so the FIRST event always logs
+ * (wrap-safe: now - (TickType_t)-1000 == now + 1000, always ≥ 1000). */
 static bool rate_limited(TickType_t *last)
 {
     TickType_t now = xTaskGetTickCount();
@@ -142,8 +144,6 @@ esp_err_t cb_battery_init(void)
 esp_err_t cb_battery_read(cb_battery_sample_t *out)
 {
     cb_battery_sample_t sample = { 0 };
-    bool warn_implausible = false;
-    bool recover_plausible = false;
     int cali_mv = 0;
     esp_err_t err;
 
@@ -180,31 +180,26 @@ esp_err_t cb_battery_read(cb_battery_sample_t *out)
         sample.battery_mv = cb_battery_math_mv_from_pin_mv(sample.pin_mv);
         sample.plausible = cb_battery_math_plausible(sample.battery_mv);
 
-        /* R6b/R14b: the implausible<->plausible transition decision happens
-         * INSIDE s_mutex so concurrent readers cannot reorder WARN/recovery;
-         * the log lines themselves are emitted outside the lock. */
+        /* R6b: the implausible<->plausible transition decision AND its
+         * WARN/recovery log lines happen INSIDE s_mutex, in this same
+         * sample-computing block, so concurrent readers cannot reorder the
+         * transition or its logs. ESP_LOG never takes s_mutex, so there is
+         * no self-deadlock; the section stays short (one gated log line). */
         if (!sample.plausible) {
             if (!s_warned_implausible) {
                 s_warned_implausible = true;
-                warn_implausible = true;
+                ESP_LOGW(TAG, "implausible %ld mV (no cell inserted?)",
+                         (long)sample.battery_mv);
             }
         } else if (s_warned_implausible) {
             s_warned_implausible = false;
-            recover_plausible = true;
+            ESP_LOGI(TAG, "reading plausible again");
         }
     }
     xSemaphoreGive(s_mutex);
 
     if (err != ESP_OK) {
         return err;   /* out untouched */
-    }
-
-    if (warn_implausible) {
-        ESP_LOGW(TAG, "implausible %ld mV (no cell inserted?)",
-                 (long)sample.battery_mv);
-    }
-    if (recover_plausible) {
-        ESP_LOGI(TAG, "reading plausible again");
     }
 
     *out = sample;
