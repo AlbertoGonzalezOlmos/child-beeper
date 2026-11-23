@@ -1,9 +1,9 @@
 # 04_imu — QMI8658 IMU diagnostic example
 
-**Status: build-verified (item 4, `./cb build 04_imu` green). Serial evidence is PENDING
-the coordinator's hardware run — see
-[docs/verification.md](../../docs/verification.md). Nothing here is hardware-verified
-until a dated serial capture exists.**
+**Status: build-verified (item 4, `./cb build 04_imu` green); serial-half hardware-captured
+2026-11-23 — see [docs/verification.md](../../docs/verification.md) checklist 8. The R23
+strict resting acceptance, motion response and accuracy/bias calibration remain PENDING
+(needs human).**
 
 ## What it shows
 
@@ -25,7 +25,9 @@ I (…) imu: ax=+0.001 ay=-0.003 az=+1.002 gx=+0.06 gy=-0.12 gz=+0.00 temp_c=+25
 I (…) imu: ax=-0.002 ay=+0.000 az=+0.998 gx=-0.03 gy=+0.05 gz=+0.01 temp_c=+25.32
 I (…) imu: alive #1                                                        (every 5 s)
 W (…) imu: read failed: ESP_ERR_TIMEOUT     (R13b: one-shot, then polling stops)
-W (…) imu: no IMU found (probed 0x6A/0x6B), samples skipped  (once, when nothing answered)
+W (…) imu: no IMU found (probed 0x6A/0x6B), samples skipped  (once, when the part could
+                                                        not be brought up: no ACK, WHO
+                                                        mismatch, or config failure)
 ```
 
 The `ready` line prints as soon as init returns — no artificial delay; if early lines are
@@ -61,9 +63,9 @@ full-scale accuracy, axis orientation and motion response stay PENDING (human) �
 | Symptom | Cause |
 |---|---|
 | `no IMU found (probed 0x6A/0x6B)` | no device ACKed — wiring/power, or the R12 internal pull-ups are too weak at 400 kHz (hardware check) |
-| `ready … who=0x??` with `who != 0x05` | unexpected WHO_AM_I revision — recorded verbatim; driver WARNs, decode still runs |
+| `W cb_imu: who_am_i 0xNN != 0x05`, no `ready` line | unexpected WHO_AM_I revision — recorded verbatim in the WARN; IMU init fails (`ESP_ERR_INVALID_RESPONSE`), so the no-IMU line prints and samples are skipped |
 | samples far from ≈1 g at rest | board tilted/moving, or scale misconfiguration — compare against the acceptance table |
-| gyro ≫ 2 dps at rest | vibration, or the part is still settling after motion |
+| gyro ≫ 2 dps at rest | vibration, or the part is still settling after motion. The 2026-11-23 board shows ≈2–3 dps resting zero-rate bias (recorded in [docs/verification.md](../../docs/verification.md) checklist 8), so a healthy unit can exceed the strict <2.00 dps threshold |
 | `read failed: …` then samples stop | the I2C read path is down (the one-shot WARN carries the error name); `alive` keeps the loop provably running |
 | `temp_c` outside 10–50 | die very hot/cold, or a decode/burst problem — compare raw burst against `cb_qmi8658_regs.h` |
 

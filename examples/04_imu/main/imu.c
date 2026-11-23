@@ -83,7 +83,10 @@ void app_main(void)
 
         int64_t now_us = esp_timer_get_time();
         if (now_us >= next_alive_us) {
-            next_alive_us = now_us + ALIVE_PERIOD_US;
+            /* Accumulate (not now + period): the check only runs on the 2 s
+             * sample tick, and accumulation keeps the long-run cadence at the
+             * contracted 5 s instead of drifting to ~6 s. */
+            next_alive_us += ALIVE_PERIOD_US;
             ESP_LOGI(TAG, "alive #%u", ++alive);
         }
     }
