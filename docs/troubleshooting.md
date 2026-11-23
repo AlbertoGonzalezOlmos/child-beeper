@@ -1,10 +1,10 @@
 # Troubleshooting & known pitfalls
 
 > Status: item 3 build-verified (12 pass, 0 fail, 2 skip on 2026-11-23), with item-2 display and
-> item-3 `cb_bsp=0.2.0`, RGB cap, button-poller and calibrated-battery serial evidence. Round-2
-> fixes are in review; visual/gesture/multimeter checks remain pending. Measured facts come from
-> the vendor demo, this toolchain and dated serial captures, not wiki prose. Symptoms marked
-> *(hardware)* can only be confirmed on the board — see [verification.md](verification.md).
+> item-3 `cb_bsp=0.2.0`, RGB cap, button-poller and calibrated-battery serial evidence. Item-4's
+> measured full gate is **13 pass, 0 fail, 2 skip**; its 2026-11-23 IMU serial result is recorded. Measured
+> facts come from the vendor demo, this toolchain and dated serial captures, not wiki prose. Symptoms
+> marked *(hardware)* can only be confirmed on the board — see [verification.md](verification.md).
 
 ## Why the vendor demo does not build on IDF v6.1 (measured)
 
@@ -33,8 +33,8 @@ forbidden list enforced by `./cb verify` step `audit-static`.
   **clears the whole register**. Correct: `&= (uint8_t)~MASK`. Our `cb_qmi8658_regs.h` exists so
   this bug class cannot reappear.
 - **QMI8658 CTRL9 wait**: `while (((QMI8658_receive(STATUSINT)) & 0x80) == 0x00);` — unbounded
-  loop, hangs forever on a missing/broken chip. Item 1 does not use CTRL9 host commands at all;
-  any future use must add a timeout.
+  loop, hangs forever on a missing/broken chip. Item 1 did not use CTRL9 host commands; item 4
+  requires the vendor's 0x12 command but polls STATUSINT bit 7 in 5 ms steps with a 100 ms bound.
 - **QMI8658 init order**: vendor calls `setState(sensor_running)` before ever checking WHO_AM_I,
   and its address macros disagree with the wiki (code uses 0x6B, wiki says 0x6A default) → our
   driver probes **both** addresses and logs the winner.
@@ -144,6 +144,43 @@ to make these visible at a glance on hardware day.
   (per-agent `-DSDKCONFIG` + repo `flock` at `<build_root>/.cb.lock`).
 - Never delete/edit another agent's `build/<name>/` tree; use your own `CB_BUILD_ROOT`.
 - Disk: each LVGL build dir is a few hundred MB — `./cb clean` when idle.
+
+## Item-4 I2C and QMI8658
+
+- **I2C config does not compile**: use `driver/i2c_master.h` (never legacy `driver/i2c.h`). The bus
+  config field is `.glitch_ignore_cnt=7`; device config explicitly needs
+  `.dev_addr_length=I2C_ADDR_BIT_LEN_7`, `.device_address=<winner>`, and
+  `.scl_speed_hz=CB_I2C_FREQ_HZ`. `esp_driver_i2c` is a public REQUIRES because `cb_i2c.h`
+  exposes the bus handle.
+- **No ACK at either address**: the driver probes 0x6A then 0x6B with a 50 ms bound, returns
+  `ESP_ERR_NOT_FOUND`, and the example prints
+  `W imu: no IMU found (probed 0x6A/0x6B), samples skipped` once. It then emits only
+  `imu: alive #N` every 5 s. This is degraded/SKIP evidence, not a hardware PASS. Internal pull-ups
+  are enabled by ruling, but their electrical suitability is hardware-pending.
+- **WHO_AM_I mismatch**: expected 0x05, but a mismatch produces a WARN and
+  `ESP_ERR_INVALID_RESPONSE`, not a process abort. Record the actual byte from the WARN; do not
+  silently rewrite it to 0x05. A post-add/WHO/config failure removes the device and mutex and
+  leaves addr/WHO at zero, so `cb_imu_addr()` cannot falsely report presence.
+- **WHO works but samples repeat/tear**: verify CTRL1 wrote `CB_QMI_CTRL1_ADDR_AI` (**0x40**, bit 6)
+  before the burst. **Measured 2026-11-23** (`a05fded`): 0x80 made the burst repeat its first byte;
+  0x40 returned real data ([verification.md](verification.md) checklist 8). The burst starts at
+  TEMP_L 0x33 and spans 14 bytes through GZ_H 0x40, not AX_L alone.
+- **Output registers look like a moving counter**: the vendor CH9/CTRL9
+  `CB_QMI_CTRL_CMD_AHB_CLOCK_GATING` command (**0x12**) is required immediately after CTRL1;
+  hardware measurement on 2026-11-23 showed the moving-counter failure without it. Poll STATUSINT
+  bit 7 in 5 ms steps with a 100 ms bound, then check the boot
+  `readback revision=… ctrl1=0x40 … ctrl9=0x12` line.
+- **Unexpected filtering**: item 4 uses LPF mode 0/bypass on both channels. RMW clears
+  `CB_QMI_ALPF_MASK` and `CB_QMI_GLPF_MASK` with `(uint8_t)~MASK`, never logical `!MASK`. CTRL7 is
+  written last with `CB_QMI_CTRL7_ACC_EN | CB_QMI_CTRL7_GYR_EN` (0x03).
+- **Read timeout or degraded output**: all post-add register transfers and sample reads share one
+  mutex with a 100 ms acquisition bound; a busy sample read returns `ESP_ERR_TIMEOUT`. Its busy
+  WARN allows the first event and is then limited to ≤1 Hz with race-free state; pre-init/no-bus
+  WARNs are one-shot. `W imu: read failed: %s` is one-shot and polling stops while alive continues.
+- **ODR mismatch**: the only Kconfig choice is `CB_IMU_ODR` with `CB_IMU_ODR_120` (default y),
+  `CB_IMU_ODR_250`, and `CB_IMU_ODR_1000`. Ranges stay fixed at 8 g/512 dps. No derived integer or
+  range knob is added to Kconfig; the driver's private `CB_IMU_ODR_HZ` macro only formats the
+  selected rate in its init log.
 
 ## Item-3 RGB, button and battery
 

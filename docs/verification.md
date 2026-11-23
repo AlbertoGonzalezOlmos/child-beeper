@@ -1,9 +1,12 @@
 # Verification — what is proven, how, and what still needs the board
 
-> Status (updated 2026-11-23, board attached): item 3 is **build-verified** (12 pass, 0 fail,
-> 2 skip). The item-2 boot/display serial checks and item-3 `cb_bsp=0.2.0`, RGB cap, button-poller
-> and calibrated-battery serial checks are **hardware-verified**. Display/LED visuals, button
-> gestures and multimeter accuracy remain PENDING (needs human). Details and dates follow.
+> Status (updated for item 4): item 3 is **build-verified** (12 pass, 0 fail, 2 skip), with
+> item-2 display and item-3 `cb_bsp=0.2.0`, RGB cap, button-poller and calibrated-battery serial
+> checks **hardware-verified**. Item-4's `04_imu` serial half is **hardware-verified 2026-11-23**;
+> its full gate is **13 pass, 0 fail, 2 skip**; only the root 0.3.0 capture remains **PENDING**.
+> Display/LED visuals, button
+> gestures, multimeter accuracy and IMU motion response/accuracy/bias calibration remain PENDING
+> (needs human). Details and dates follow.
 
 This repo distinguishes two levels of proof, and every doc/report must say which one applies:
 
@@ -56,6 +59,14 @@ Rule (also in `AGENTS.md`): *never claim hardware-verified without a board.*
   `cycle 9` and `alive #3`. `03_battery` printed `cb_battery: adc up, cali curve` and stable
   `calibrated=1 plausible=1` samples. Exact quoted lines are in checklist 7 below. LED visuals,
   button gestures, multimeter accuracy and physical cell presence remain **PENDING (needs human)**.
+- **Item-4 gate/serial status**: the full gate on the item-4 tip completed **13 pass, 0 fail,
+  2 skip**; app and all four examples built, sdkconfig-assert passed all **five** targets, host
+  tests passed **47**, and CLI tests passed **112**. The `cb_bsp=0.3.0` root summary remains
+  **PENDING**. The 2026-11-23 `04_imu` capture is a **serial-half PASS**: 0x6B answered after 0x6A
+  was silent, WHO_AM_I was 0x05, revision was 0x7C, and stable decoded samples gave 0.99 g magnitude
+  with approximately 31 °C temperature. Hardware also resolved ADDR_AI as **0x40** and established
+  that CTRL9 **0x12** is required; both fixes are in `a05fded`. Exact lines and the still-pending
+  motion/accuracy/bias checks are in checklist 8 below.
 - **Item-3 round-1 agent-side checks (2026-11-23; supplementary, not the full gate)**: with
   `CB_BUILD_ROOT=build/kimi-k31-pro`, `./cb test` passed all **39** host tests (`# failed 0`),
   `./cb verify --fast` completed **7 pass, 0 fail, 7 skip** (109 CLI tests), and
@@ -110,9 +121,21 @@ Steps run in a **fixed order** with **stable ids**; each prints `[PASS]/[FAIL]/[
    4501 false). The R11b amendment removed the IDF `esp_err.h` stub and the button-poll macro's
    IDF-header test; constants are asserted through pure headers only. No IDF peripheral driver
    source is host-compiled.
+   Item 4 adds `cb_imu_math` and nine tests (38 + 9 = **47** total): `test_imu_math_raw_len`
+   (CB_IMU_RAW_LEN==14), `test_imu_math_decode_resting` (temp 25 °C and AZ=1 g at 8 g),
+   `test_imu_math_decode_accel_sign` (-8192→-2 g, 2048→0.5 g, -4096→-1 g at 8 g),
+   `test_imu_math_decode_gyro` (8192→128, -16384→-256, 256→4 dps at 512 dps),
+   `test_imu_math_decode_ranges` (4096 raw→0.25/0.5/1/2 g at 2/4/8/16 g; gyro MIN→-16 dps;
+   MAX at 1024→1023.96875 dps), `test_imu_math_decode_temp` (0/1/25/0.5/-1/-128 °C),
+   `test_imu_math_decode_layout` (TEMP,AX,AY,AZ,GX,GY,GZ at offsets 0,2,4,6,8,10,12),
+   `test_imu_math_decode_invalid` (NULL/invalid ranges return false with out byte-identical), and
+   `test_imu_math_decode_int16_min` (0x8000 decodes to exact negative range without signed
+   negation/UB). Existing helper tests also cover temp 0xFF80→-0.5 and full-scale
+   +32767→range*32767/32768 rather than +range.
 3. `cli-tests` — the CLI's own unit tests:
    `python3 -m unittest discover -s tools/tests -t . -q` (a missing `tools/tests/` is a FAIL,
-   owner deepseek-flash).
+   owner deepseek-flash). The current item-4 suite has **112 tests**, including the added required
+   target and five-lock fixtures.
 4. `pin-drift` — byte-compares Arduino copies of the shared headers against
    `components/cb_bsp/include/`. **SKIP while `arduino/` is absent.**
 5. `audit-static` — forbidden constructs + absolute-path scan (scope below).
@@ -120,12 +143,13 @@ Steps run in a **fixed order** with **stable ids**; each prints `[PASS]/[FAIL]/[
    **esp_lvgl_port 2.9.0**, **led_strip 3.1.1**, **idf 6.1.0**, and
    `components/cb_bsp/idf_component.yml` must pin those three exactly (no `^`/`~`/`>=` ranges).
    A missing/stale lock FAILs with a `./cb deps` hint — run `./cb deps` once after any
-   manifest/lock change (ruling A9). Item 3 has four project locks: root, `01_lcd_hello`,
-   `02_rgb_button`, and `03_battery`. The two new locks are committed by the example owner after
-   each first successful build; dependency versions themselves do not change.
+   manifest/lock change (ruling A9). Item 4 has five project locks: root, `01_lcd_hello`,
+   `02_rgb_button`, `03_battery`, and `04_imu`. Each example lock is committed by the example owner
+   after its first successful build; dependency versions themselves do not change.
 7. `build:app` — builds the root app (`main/` "hello beeper").
 8. `build:<example>` — one step per `examples/*`. Item 3 adds required steps
-   `build:02_rgb_button` and `build:03_battery` after `build:01_lcd_hello`.
+   `build:02_rgb_button` and `build:03_battery` after `build:01_lcd_hello`; item 4 adds the required
+   `build:04_imu` step.
 9. `sdkconfig-assert` — per built target: OCT PSRAM, PSRAM 80 M, 16 MB flash, USB-Serial/JTAG
    console, custom partition table; plus the built partition binary exists and the table contains
    `factory,app,factory,0x10000,3M` and `storage,data,fat,0x310000,0x800000`.
@@ -135,7 +159,7 @@ Steps run in a **fixed order** with **stable ids**; each prints `[PASS]/[FAIL]/[
    `CONFIG_LV_FONT_DEFAULT_MONTSERRAT_14=y`, `CONFIG_LV_FONT_MONTSERRAT_14=y`,
    `CONFIG_LV_USE_LABEL=y`, `CONFIG_LV_USE_IMAGE=y`; and **forbids** `CONFIG_LV_CONF_MINIMAL=y`.
    Absence of any `CONFIG_LV_` config in those two targets is a **FAIL, not a skip**. For every
-   other target, including 02/03, the same eight keys are checked **whenever any `CONFIG_LV_*`
+   other target, including 02/03/04, the same eight keys are checked **whenever any `CONFIG_LV_*`
    entry is present**; cb_bsp's manifest normally makes them present even though those examples
    do not call LVGL. (`CONFIG_LV_OS_NONE=y` is deliberate: esp_lvgl_port owns the LVGL task;
    demanding an `LV_OS_FREERTOS`-style setting would fail a correct build.)
@@ -147,13 +171,15 @@ Steps run in a **fixed order** with **stable ids**; each prints `[PASS]/[FAIL]/[
     durations, app sizes via `idf.py size --format json` when it succeeds, `.bin`-size fallback
     otherwise). `./cb report` prints the markdown.
 
-**Item-1 strictness + item-3 R9b:** `tests/host/Makefile`, `build:app`,
-`build:01_lcd_hello`, `build:02_rgb_button`, and `build:03_battery` are *required* — missing
-files make those steps **FAIL**, not SKIP, even in `--fast` mode. SKIP is legitimate only for
-`pin-drift`, `arduino:*` (no `arduino/` tree yet), builds deliberately skipped by `--fast`, and
-`--offline` sub-checks when `unshare` is unavailable. With all item-3 projects present, a normal
-full gate still has the two expected Arduino-related SKIPs; sdkconfig-assert covers **four**
-targets (app + three examples).
+**Item-1 strictness + item-3 R9b + item-4 R25:** `tests/host/Makefile`, `build:app`,
+`build:01_lcd_hello`, `build:02_rgb_button`, `build:03_battery`, and `build:04_imu` are *required*
+— missing files make those steps **FAIL**, not SKIP, even in `--fast` mode. The full and fast
+missing-04 tests both require detail `examples/04_imu missing (CMakeLists.txt not found)`. SKIP is
+legitimate only for `pin-drift`, `arduino:*` (no `arduino/` tree yet), build and dependent
+`sdkconfig-assert` steps deliberately skipped by `--fast`, and `--offline` sub-checks when
+`unshare` is unavailable. With all item-4 projects
+present, a normal full gate still has the two expected Arduino-related SKIPs; sdkconfig-assert
+covers **five** targets (app + four examples).
 
 **Exit codes:** a FAIL in `doctor` → **3**; any other FAIL → **1**; all PASS/SKIP → **0**.
 (Globally: 0 ok, 1 build/test failure, 2 board/port absent, 3 usage/environment.)
@@ -293,8 +319,58 @@ Procedure per line: run the command, compare with "expected", tick and fill in d
         remains unchanged: no `bat=`/`rgb=` heartbeat keys and no root button handler. Only
         I2C/IMU/SD still log `not implemented`. This boot-summary check does not by itself prove
         optional RGB/button/battery health; their separate serial lines above are the evidence.
-- [ ] 8. (item 4+) IMU: log shows which address answered the probe (**0x6A or 0x6B**), WHO_AM_I
-      0x05, ≈1 g on the resting axis, gyro ≈0.
+- [ ] 8. (item 4) **I2C/QMI8658 IMU — serial half PASS 2026-11-23; remaining checks below are
+      PENDING.**
+      - [x] **Bus/probe/init serial — PASS 2026-11-23**: observed `probe 0x6A no answer`, then
+        `probe 0x6B answered`; WHO_AM_I was **0x05**, revision readback was **0x7C**, and init
+        completed with `up addr=0x6B who=0x05 range=8g/512dps odr=120Hz`. The new `ctrl9 done` and
+        `readback` boot lines are quoted below. Internal-pull-up electrical suitability is not
+        inferred from these serial lines.
+      - [x] **Measured ADDR_AI and CH9/CTRL9 fixes — PASS 2026-11-23**: CTRL1 auto-increment is
+        **bit 6 = 0x40**, not 0x80. With 0x80 the measured burst repeated its first byte
+        (`burst35=41 41 41 41 41 41`); with 0x40 it returned real data (`3F F1 69 03 38 FB`). The
+        vendor CH9/CTRL9 **0x12 AHB-clock-gating command is also required**: without it the output
+        registers returned a moving counter. The corrected macro, bounded CTRL9 completion wait and
+        permanent readback line landed in **`a05fded`**.
+      - [x] **Ready/repeating-sample/alive serial — PASS 2026-11-23**: observed
+        `imu: ready addr=0x6B who=0x05`, two stable full sample lines approximately 2 s apart, and
+        `imu: alive #1`. This proves the quoted serial behavior, not a longer cadence soak.
+
+        Coordinator's final `./cb flash --target 04_imu` capture:
+
+        ```text
+        I (590) cb_imu: probe 0x6A no answer
+        I (591) cb_imu: probe 0x6B answered
+        I (596) cb_imu: ctrl9 cmd 0x12 done in 5 ms
+        I (648) cb_imu: readback revision=0x7C ctrl1=0x40 ctrl2=0x26 ctrl3=0x56 ctrl7=0x03 ctrl9=0x12
+        I (648) cb_imu: up addr=0x6B who=0x05 range=8g/512dps odr=120Hz
+        I (648) imu: ready addr=0x6B who=0x05
+        I (649) imu: ax=-0.921 ay=+0.212 az=-0.299 gx=-2.16 gy=-3.22 gz=+0.12 temp_c=+31.05
+        I (2650) imu: ax=-0.923 ay=+0.211 az=-0.300 gx=-2.27 gy=-3.31 gz=+0.16 temp_c=+31.03
+        I (6652) imu: alive #1
+        ```
+      - [ ] **R23 resting acceptance** — with the board resting flat, the largest of
+        `|ax|`, `|ay|`, `|az|` must be **0.9–1.1 g**; each of the other two accel axes must be
+        **<0.15 g**; every `|gx|`, `|gy|`, `|gz|` must be **<2.00 dps**; and `temp_c` must be
+        **10–50 °C**. Record actual numeric samples. These are sanity thresholds, not calibration,
+        full-scale accuracy or axis-orientation proof. **Measured in this capture**:
+        `ax=-0.921 ay=+0.212 az=-0.299`, magnitude **0.99 g** concentrated on X with the board
+        resting on its side; gyro was within approximately **3 dps** of zero and temperature was
+        stable near **31 °C**. This is functional serial evidence, but the side-resting capture does
+        not meet every strict threshold above (`ay`/`az` and `gx`/`gy`), so no R23 acceptance or
+        accuracy/bias-calibration PASS is claimed.
+      - [ ] **Degraded paths** — if neither address ACKs, record one
+        `W imu: no IMU found (probed 0x6A/0x6B), samples skipped` and continuing alive lines with
+        no ready/sample lines; mark this **SKIP/degraded, never PASS**. On a read error, require
+        one `W imu: read failed: %s`, stopped polling and continuing alive lines. An unobserved
+        failure path remains code/build-only.
+      - [ ] **Root regression serial** — fresh `app` boot must contain
+        `cb_bsp=0.3.0 init(CB_PART_ALL)=ESP_OK` and continuing `hello_beeper: alive #N`; only SD
+        should remain `not implemented`. This does not prove optional IMU health.
+      - [ ] **Human/electrical checks** — deliberate motion response (tilt/shake changes the vector
+        as expected), full-scale accuracy and **accuracy/bias calibration** remain **PENDING (needs
+        human)**. Axis orientation and internal-pull-up signal integrity at 400 kHz also remain
+        PENDING even after the serial checks above pass.
 - [ ] 9. (item 5+) SD: mount logs the bus width used (4-bit, or 1-bit fallback); write/read
       round-trip passes; **no card is ever auto-formatted**.
 - [ ] 10. (item 6+) `./cb selftest` → `SELFTEST`/`ITEM:`/`RESULT:` lines, `RESULT` all PASS
@@ -303,4 +379,5 @@ Procedure per line: run the command, compare with "expected", tick and fill in d
       `Serial` output visible over Type-C (CDC on boot).
 - [ ] 12. (item 8+) Wi-Fi scan lists APs; BLE scan lists advertisers.
 
-Unticked boxes are **build-verified only**; ticked boxes record measured hardware facts with dates.
+Unticked boxes are **not hardware-verified**; build/code status is stated above, and human-only
+checks stay pending even after a successful build. Ticked boxes record measured facts with dates.

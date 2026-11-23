@@ -1,4 +1,19 @@
 # components/cb_bsp/Kconfig — Child Beeper BSP configuration.
 #
-# Item 1 ships NO Kconfig knobs (CONTRACT R5). Knobs are deferred to items 4
-# (IMU) and 5 (SD), which own them and extend this file via the review round.
+# Item 4 (IMU, ITEM4-RULINGS R18): exactly one knob — the QMI8658 output
+# data rate as a choice of named ODRs, default 120 Hz (plan.md R11). The
+# driver maps the choice to CB_QMI_*_ODR_NORM_* with #if defined(...).
+# Accel/gyro ranges stay fixed at +-8 g / +-512 dps: no range knobs, no
+# runtime switching. Item 5 (SD) owns its own knob here later.
+
+choice CB_IMU_ODR
+    prompt "QMI8658 IMU output data rate"
+    default CB_IMU_ODR_120
+
+    config CB_IMU_ODR_120
+        bool "120 Hz"
+    config CB_IMU_ODR_250
+        bool "250 Hz"
+    config CB_IMU_ODR_1000
+        bool "1000 Hz"
+endchoice

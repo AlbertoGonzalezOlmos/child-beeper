@@ -23,7 +23,8 @@ TEST_SOURCES := \
 	$(REPO_ROOT)/components/cb_bsp/src/cb_button_fsm.c \
 	$(REPO_ROOT)/components/cb_bsp/src/cb_pattern.c \
 	$(REPO_ROOT)/components/cb_bsp/src/cb_rgb_math.c \
-	$(REPO_ROOT)/components/cb_bsp/src/cb_battery_math.c
+	$(REPO_ROOT)/components/cb_bsp/src/cb_battery_math.c \
+	$(REPO_ROOT)/components/cb_bsp/src/cb_imu_math.c
 
 TEST_HEADERS := \
 	$(REPO_ROOT)/components/cb_bsp/include/cb_pins.h \
@@ -32,7 +33,8 @@ TEST_HEADERS := \
 	$(REPO_ROOT)/components/cb_bsp/include/cb_qmi8658_regs.h \
 	$(REPO_ROOT)/components/cb_bsp/include/cb_pattern.h \
 	$(REPO_ROOT)/components/cb_bsp/include/cb_rgb_math.h \
-	$(REPO_ROOT)/components/cb_bsp/include/cb_battery_math.h
+	$(REPO_ROOT)/components/cb_bsp/include/cb_battery_math.h \
+	$(REPO_ROOT)/components/cb_bsp/include/cb_imu_math.h
 
 .PHONY: all run_tests test clean
 .DELETE_ON_ERROR:
