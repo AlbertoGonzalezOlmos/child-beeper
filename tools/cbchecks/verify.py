@@ -32,10 +32,10 @@ from .targets import Target, app_target, build_dir, discover, idf_examples
 PASS, FAIL, SKIP = "PASS", "FAIL", "SKIP"
 
 # Item-1 required targets (R6): missing => FAIL, never SKIP.
-# Item 3 (R9b): the item's example deliverables join the required set — same
-# rule, so a deleted examples/02_rgb_button or examples/03_battery dir fails
-# the gate instead of silently vanishing from the build list.
-REQUIRED_EXAMPLES = ("01_lcd_hello", "02_rgb_button", "03_battery")
+# Item 3 (R9b) / item 4 (R25): the items' example deliverables join the required
+# set — same rule, so a deleted examples/<dir> fails the gate instead of
+# silently vanishing from the build list. Checked even in --fast mode.
+REQUIRED_EXAMPLES = ("01_lcd_hello", "02_rgb_button", "03_battery", "04_imu")
 
 OFFLINE_UNAVAILABLE = "offline namespace (unshare -rn) unavailable — NOT proven offline"
 
