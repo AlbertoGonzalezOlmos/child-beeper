@@ -1,8 +1,9 @@
 # 02_rgb_button — RGB LED + BOOT button diagnostic example
 
-**Status: build-verified (item 3, `./cb build 02_rgb_button` green). Serial and hardware
-checks are pending the coordinator's flash session — LED visibility/brightness and button
-feel need a human (see [docs/verification.md](../../docs/verification.md)).**
+**Status: build-verified (item 3, `./cb build 02_rgb_button` green) and serial-verified
+2026-11-23 (RGB init + the full five-cycle serial contract observed on hardware). LED
+appearance and button gestures remain PENDING (needs human) — see
+[docs/verification.md](../../docs/verification.md).**
 
 ## What it shows
 

@@ -3,7 +3,7 @@
  *
  * Exercises the optional cb_battery part (ADC1_CH0 oneshot on GPIO1, 12 dB
  * atten) through cb_bsp: one cb_battery_read() every 2 s prints the full
- * sample. The 3x divider (200k/100k) and the 700/695 eFuse gain are applied
+ * sample. The frozen ×3 divider and the 700/695 eFuse gain are applied
  * inside the BSP; `plausible` is the 2500..4500 mV heuristic (a warning
  * heuristic, NOT cell detection or a state-of-charge estimate).
  *

@@ -1,14 +1,15 @@
 # 03_battery — battery ADC diagnostic example
 
-**Status: build-verified (item 3, `./cb build 03_battery` green). Serial and hardware
-checks are pending the coordinator's flash session — ±5 % accuracy vs a multimeter needs a
-human (see [docs/verification.md](../../docs/verification.md)).**
+**Status: build-verified (item 3, `./cb build 03_battery` green) and serial-verified
+2026-11-23 (curve-fitting calibration + stable battery samples observed on hardware).
+Multimeter accuracy (±5 %) remains PENDING (needs human) — see
+[docs/verification.md](../../docs/verification.md).**
 
 ## What it shows
 
 The optional **`cb_battery`** part (ADC1_CH0 oneshot, GPIO1, 12 dB atten) through `cb_bsp`:
 one `cb_battery_read()` every 2 s prints the whole `cb_battery_sample_t` — raw sample,
-calibrated ADC-pin millivolts, battery millivolts after the 200k/100k divider (×3) and the
+calibrated ADC-pin millivolts, battery millivolts after the frozen ×3 divider and the
 700/695 eFuse gain, whether curve-fitting calibration was usable, and the plausibility flag.
 
 `plausible` is a **warning heuristic** (inclusive 2500–4500 mV window), not cell detection
