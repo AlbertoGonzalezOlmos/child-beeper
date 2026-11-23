@@ -1,9 +1,9 @@
 # Verification — what is proven, how, and what still needs the board
 
-> Status (updated 2026-11-08, board attached): the toolkit is build-verified **and** the first
-> hardware session is done — flash, console and an 11-minute soak are now **hardware-verified**;
-> everything else remains build-verified only. See "Hardware status" below and the checklist at the
-> bottom.
+> Status (updated 2026-11-23, board attached): the toolkit is build-verified **and** flash,
+> console, an 11-minute soak, the item-2 boot summary and the display's serial diagnostic are
+> **hardware-verified**. Display visuals and all remaining peripherals still need their listed
+> evidence. See "Hardware status" below and the checklist at the bottom.
 
 This repo distinguishes two levels of proof, and every doc/report must say which one applies:
 
@@ -33,16 +33,26 @@ Rule (also in `AGENTS.md`): *never claim hardware-verified without a board.*
   `lcd_hello: frame 1..6` every 2 s — panel init, LVGL port and the render loop run on hardware.
   (The first flash attempt boot-looped on the `esp_lvgl_port_disp.c:120` io_handle assert;
   fixed in commit 92e336d together with the internal-DMA buffer config.) **Colours, x-gap,
-  inversion, mirroring, backlight timing and tearing remain hardware-PENDING** — they need a
+  inversion, mirroring and tearing remain hardware-PENDING** — they need a
   human looking at the panel (checklist item 6).
+- **Item-2 boot/display serial session (2026-11-23)**: the root app printed
+  `boot summary: reset=USB cb_bsp=0.1.0 init(CB_PART_ALL)=ESP_OK idf=v6.1 heap int=206355B/169924B psram=8269144B`,
+  satisfying checklist 3 and recording the pre-item-3 heap baseline. `01_lcd_hello` printed the exact
+  A5 display line, `cb_lcd: first frame done: backlight 100%`, and `lcd_hello: frame 1` through
+  `frame 12` at approximately 2 s intervals with no reset/WDT. The serial half of checklist 6 and
+  the first-frame backlight hook are therefore **hardware-verified**; every visual check remains
+  **hardware-PENDING (needs human)**.
+- **Attached-board fast gate (2026-11-23)**: `CB_BUILD_ROOT=build/coordinator ./cb verify --fast`
+  completed with **7 pass, 0 fail, 5 skip**, including 106 CLI tests.
 
 **hardware-UNAVAILABLE (with reasons)**
-- **Early boot lines are not observable** on the USB-Serial/JTAG console: after a reset the native
-  USB peripheral re-enumerates and the host re-attaches only ~1 s later, so ROM/bootstrap/
-  bootloader output and the app's banner/WARN lines are dropped before anyone is listening. The
-  root app therefore prints a **one-shot boot summary on its first heartbeat**
-  (`boot summary: reset=… cb_bsp=… init(CB_PART_ALL)=… idf=…`) — observe that line instead of the
-  true early boot log.
+- **Early boot lines may be unobservable** on the USB-Serial/JTAG console: after a reset the native
+  USB peripheral re-enumerates and the host may re-attach only after the app's early output. Whether
+  a particular banner/WARN line is captured depends on that timing. On 2026-11-23 the monitor did
+  capture the `I (683)` banner and `W (684…)` part warnings, so categorical loss is disproven. The
+  root app's **one-shot boot summary on its first heartbeat**
+  (`boot summary: reset=… cb_bsp=… init(CB_PART_ALL)=… idf=…`) remains the reliable observation
+  point.
 - **BOOT+RESET recovery drill** (hold BOOT → tap RESET → release) needs a physical finger on the
   buttons — still pending.
 - **Wi-Fi STA connect** (item 8): the root app reads `wifi_settings.txt` from the FAT `storage`
@@ -142,7 +152,8 @@ are all present in the local caches — see [troubleshooting.md](troubleshooting
 - That frozen peripheral constants match silicon (ADC unit / SPI host enum values are
   contract-checked by host tests; the electrical truth is a hardware-day item). Chip identity,
   flash size and PSRAM presence **are** now hardware-verified (above).
-- Early-boot log content (dropped by USB re-enumeration — use the one-shot boot-summary line).
+- Early-boot log content (it may be dropped by USB re-enumeration — use the reliable one-shot
+  boot-summary line; the 2026-11-23 session did capture early lines).
 - Code-level display facts: backlight duty-0-at-init, the `LV_EVENT_REFR_READY` bring-up hook,
   `cb_bsp_init` idempotency, LVGL port defaults — proven by code review + compiling, not by gate
   steps (the gate deliberately does not fake these with source greps).
@@ -161,22 +172,29 @@ Procedure per line: run the command, compare with "expected", tick and fill in d
       **verified 2026-11-08**.
 - [x] 2. `./cb flash --target app` succeeds; the console streams `hello_beeper: alive #N` every 2 s
       (`./cb monitor` live, `Ctrl-]` quits; or raw `cat /dev/ttyACM0`); ~11 min soak
-      (`alive #323`) with no WDT/reset — **verified 2026-11-08**. The true early-boot lines
-      (banner/WARN) are dropped by USB re-enumeration — see "Hardware status" above.
-- [ ] 3. **Boot summary**: after a fresh flash/reset, the first heartbeat carries the one-shot
-      `boot summary: reset=… cb_bsp=0.1.0 init(CB_PART_ALL)=… idf=…` line. Expected value
-      **from item 2 on: `ESP_OK`** (A6 — strict LCD/LVGL parts implemented; RGB/I2C/IMU/BUTTON/
-      BATTERY/SD still WARN `not implemented`). The item-1 flashes showed
-      `ESP_ERR_NOT_SUPPORTED` — historical (pending — observe at the next flash).
+      (`alive #323`) with no WDT/reset — **verified 2026-11-08**. Early banner/WARN lines may be
+      lost depending on USB re-attachment timing; the 2026-11-23 session captured them — see
+      "Hardware status" above.
+- [x] 3. **Boot summary**: after a fresh flash/reset, the first heartbeat carries the one-shot
+      `boot summary: reset=… cb_bsp=0.1.0 init(CB_PART_ALL)=… idf=…` line. **Verified
+      2026-11-23**: `reset=USB cb_bsp=0.1.0 init(CB_PART_ALL)=ESP_OK idf=v6.1`, with
+      `heap int=206355B/169924B psram=8269144B`. This matches A6 (strict LCD/LVGL parts
+      implemented; six optional parts still WARN `not implemented`). Item 3 must be re-observed
+      with `cb_bsp=0.2.0`; the 2026-11-23 0.1.0 record is historical evidence, not item-3 proof.
 - [x] 4. Guard logic with the board attached: `CB_FORCE_NO_PORTS=1 ./cb flash` → exit **2** +
       BOOT/RESET hint — **verified** via `./cb verify` step `guards-no-board`.
 - [ ] 5. Recovery: hold **BOOT**, tap **RESET**, release **BOOT** → download mode; flash succeeds
       (**pending — needs a physical press**).
 - [ ] 6. (item 2) **Display diagnostic** — `./cb flash --target 01_lcd_hello`, then check:
-      - serial: `display: 172x320 ST7789, spi2 @40MHz, gap(34,0), lvgl 9.5` once, then
-        `lcd_hello: frame N` every 2 s (A5 — exact strings);
-      - 8 vertical bars, left→right: **white, yellow, cyan, green, magenta, red, blue, black**
-        (red↔blue swap ⇒ element order wrong; garbled hues ⇒ byte-swap wrong);
+      - [x] **Serial half — PASS 2026-11-23**: exact
+        `display: 172x320 ST7789, spi2 @40MHz, gap(34,0), lvgl 9.5` line, followed by
+        `lcd_hello: frame 1` through `frame 12` every ~2 s with no reset/WDT. The log also showed
+        `cb_lcd: first frame done: backlight 100%`, proving the A2 first-frame hook. The separate
+        `cb_lcd: display: 172x320 ST7789, spi2 @40MHz, gap(34,0)` and LVGL internal-DMA lines were
+        captured.
+      - [ ] 8 vertical bars, left→right: **white, yellow, cyan, green, magenta, red, blue, black**
+        (red↔blue swap ⇒ element order wrong; garbled hues ⇒ byte-swap wrong) — **PENDING, needs
+        human eyes**;
       - four **2×2 corner markers**: TL red, TR yellow, BL cyan, BR magenta — all four visible at
         the very corners (any missing/shifted ⇒ x-gap 34 or mirroring wrong; A4 layout);
       - bottom **grey ramp** runs black→white left→right over the last `height/16` rows;
