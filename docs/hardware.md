@@ -3,9 +3,11 @@
 > Status (updated for item 6): chip identity, flash size, PSRAM presence, console and app boot are
 > **hardware-verified**. Item-2 display, item-3 RGB/button/battery and item-4 IMU serial checks are
 > also recorded. Item-5's no-card degraded path was serial-observed on 2026-11-23; mounted I/O and
-> successful fallback remain PENDING. Item-6's full gate and serial-half capture are recorded;
-> its final round-2 gate, dashboard visuals and live/alive soak are PENDING. A mount error is not
-> proof of physical card absence. Pin values mirror `components/cb_bsp/include/cb_pins.h`; measurements live in
+> successful fallback remain PENDING. Item-7's **18 pass, 0 fail, 0 SKIP** full gate and
+> `rgb_blink` serial-half capture are recorded; `button_events` upload and visible LED/gesture
+> behavior remain PENDING. Item-6's full gate and serial-half capture are recorded; its final
+> round-2 gate, dashboard visuals and live/alive soak are PENDING. A mount error is not proof of
+> physical card absence. Pin values mirror `components/cb_bsp/include/cb_pins.h`; measurements live in
 > [verification.md](verification.md).
 
 ## Board / SoC

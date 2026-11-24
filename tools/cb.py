@@ -5,7 +5,7 @@ Frozen surface (CONTRACT.md):
   doctor [--json] [--offline] | deps [--offline] | list | build [TARGET...|--all] | test |
   verify [--fast] [--no-arduino] [--offline] | ports [--json] | flash [--port P] [--target T] |
   monitor [--port P] | selftest [--port P] | arduino [SKETCH...] [--install-libs] |
-  arduino-install | report | clean [TARGET|--all]
+  arduino --upload [SKETCH] [--port P] | arduino-install | report | clean [TARGET|--all]
 
 Exit codes: 0 ok, 1 build/test failure, 2 board/port absent, 3 usage or environment problem.
 Standard library only.
@@ -27,13 +27,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from cbchecks import binaries as binaries_mod  # noqa: E402
 from cbchecks import build as builder  # noqa: E402
+from cbchecks import arduino as arduino_mod  # noqa: E402
 from cbchecks import doctor as doctor_mod  # noqa: E402
 from cbchecks import ports as ports_mod  # noqa: E402
 from cbchecks import report as report_mod  # noqa: E402
 from cbchecks import targets as targets_mod  # noqa: E402
 from cbchecks import verify as verify_mod  # noqa: E402
 from cbchecks.context import (  # noqa: E402
-    ARDUINO_DIR,
     HOST_TESTS_MAKEFILE,
     PARTITIONS_CSV,
     Ctx,
@@ -627,8 +627,8 @@ def cmd_selftest(args: argparse.Namespace) -> int:
 
 # -------------------------------------------------------------------------- arduino
 def cmd_arduino(args: argparse.Namespace) -> int:
-    ctx = load_ctx(no_arduino=True)
-    sketches = [t for t in targets_mod.discover(load_ctx()) if t.kind == "arduino"]
+    ctx = load_ctx()
+    sketches = [t for t in targets_mod.discover(ctx) if t.kind == "arduino"]
     if args.install_libs:
         if ctx.offline:
             raise EnvError("--install-libs needs network access; refusing in offline mode")
@@ -640,8 +640,8 @@ def cmd_arduino(args: argparse.Namespace) -> int:
         if not result.ok:
             _print(result.err, err=True)
             return CODE_FAIL
-    if not sketches:
-        _print("no Arduino sketches yet (arduino/ tree lands in item 7)")
+    if not sketches and not args.upload:
+        _print("no Arduino sketches found under arduino/ (expected arduino/sketches/<name>/<name>.ino)")
         return CODE_OK
     if args.sketches:
         wanted = set(args.sketches)
@@ -649,6 +649,16 @@ def cmd_arduino(args: argparse.Namespace) -> int:
         if unknown:
             raise UsageError(f"unknown sketch(es): {', '.join(sorted(unknown))}")
         sketches = [t for t in sketches if t.name in wanted]
+    port: str | None = None
+    if args.upload:
+        # AR13: the port guard runs BEFORE any staging/build (exit 2 + BOOT/RESET hint).
+        port = ports_mod.guard_port(args.port)
+        if len(sketches) != 1:
+            names = ", ".join(t.name for t in sketches) or "none discovered"
+            raise UsageError(
+                f"--upload needs exactly one sketch, got {len(sketches)} ({names}); "
+                "pass a single sketch name, e.g. './cb arduino --upload rgb_blink'"
+            )
     runner = Runner(ctx)
     failed: list[str] = []
     for sketch in sketches:
@@ -656,24 +666,33 @@ def cmd_arduino(args: argparse.Namespace) -> int:
         _print(f"[{'PASS' if outcome.ok else 'FAIL'}] arduino:{sketch.name} {outcome.detail}")
         if not outcome.ok:
             failed.append(sketch.name)
+            continue
+        if args.upload:
+            assert port is not None
+            result = builder.upload_arduino(ctx, runner, sketch, port)
+            _print(result.out)
+            _print(result.err, err=True)
+            if not result.ok:
+                _print(f"[FAIL] upload arduino:{sketch.name} to {port}", err=True)
+                failed.append(sketch.name)
     return CODE_FAIL if failed else CODE_OK
 
 
 def cmd_arduino_install(args: argparse.Namespace) -> int:
+    # AR9: install the SAME staged tree the gate compiles against (mirror-verified),
+    # never a hand-maintained copy.
     ctx = load_ctx()
-    libs_src = ctx.path(ARDUINO_DIR) / "libraries"
-    libraries = sorted(p for p in libs_src.glob("*") if p.is_dir()) if libs_src.is_dir() else []
-    if not libraries:
-        raise EnvError("no Arduino libraries to install yet (arduino/ tree lands in item 7)")
+    staged, err = arduino_mod.stage_library(ctx)
+    if err is not None or staged is None:
+        raise EnvError(err or "staging failed")
     sketchbook = Path(os.environ.get("ARDUINO_SKETCHBOOK", str(Path.home() / "Arduino")))
     target_dir = sketchbook / "libraries"
     target_dir.mkdir(parents=True, exist_ok=True)
-    for lib in libraries:
-        dest = target_dir / lib.name
-        if dest.exists():
-            shutil.rmtree(dest)
-        shutil.copytree(lib, dest)
-        _print(f"installed {lib.name} -> {dest}")
+    dest = target_dir / staged.name
+    if dest.exists():
+        shutil.rmtree(dest)
+    shutil.copytree(staged, dest)
+    _print(f"installed {staged.name} (staged, {len(arduino_mod.REQUIRED_MIRROR)} mirror files) -> {dest}")
     return CODE_OK
 
 
@@ -765,9 +784,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--port")
     p.set_defaults(func=cmd_selftest)
 
-    p = sub.add_parser("arduino", help="compile Arduino sketches")
+    p = sub.add_parser("arduino", help="compile Arduino sketches (or upload one)")
     p.add_argument("sketches", nargs="*")
     p.add_argument("--install-libs", action="store_true")
+    p.add_argument("--upload", action="store_true", help="upload one sketch (guarded port, exit 2 without a board)")
+    p.add_argument("--port", help="serial port to upload to (default: the only /dev/ttyACM*|ttyUSB*)")
     p.set_defaults(func=cmd_arduino)
 
     p = sub.add_parser("arduino-install", help="copy arduino/libraries into the IDE sketchbook")

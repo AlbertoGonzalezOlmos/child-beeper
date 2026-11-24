@@ -55,13 +55,19 @@ def _idf_details(runner: Runner) -> tuple[str, str]:
     return (PASS, f"{version} via {script}")
 
 
-def _arduino_details(runner: Runner) -> tuple[str, str]:
+def _arduino_details(ctx: Ctx, runner: Runner) -> tuple[str, str, bool]:
+    """Returns (status, detail, fatal). AR14: fatal once arduino/ exists (unless opted out)."""
+    required = ctx.path(c.ARDUINO_DIR).is_dir() and not ctx.no_arduino
     cli = arduino_cli()
     if cli is None:
-        return (WARN, "arduino-cli not found (tier-2 path; set $CB_ARDUINO_CLI)")
+        if required:
+            return (FAIL, "arduino-cli not found (required: arduino/ exists; set $CB_ARDUINO_CLI)", True)
+        return (WARN, "arduino-cli not found (tier-2 path; set $CB_ARDUINO_CLI)", False)
     result = runner.run([str(cli), "version"], timeout=60)
     if not result.ok:
-        return (WARN, f"{cli}: {result.tail(2)}")
+        if required:
+            return (FAIL, f"{cli}: {result.tail(2)}", True)
+        return (WARN, f"{cli}: {result.tail(2)}", False)
     version = result.out.strip().splitlines()[0] if result.out.strip() else "unknown"
     core = runner.run([str(cli), "core", "list"], timeout=60)
     core_line = ""
@@ -71,10 +77,21 @@ def _arduino_details(runner: Runner) -> tuple[str, str]:
                 core_line = " ".join(line.split())
                 break
     if ARD_CORE_VERSION not in core_line:
-        return (WARN, f"{version}; core {ARD_CORE_ID} {ARD_CORE_VERSION} not found")
+        if required:
+            return (
+                FAIL,
+                f"{version}; core {ARD_CORE_ID} {ARD_CORE_VERSION} not found (required: arduino/ exists)",
+                True,
+            )
+        return (WARN, f"{version}; core {ARD_CORE_ID} {ARD_CORE_VERSION} not found", False)
     libs = runner.run([str(cli), "lib", "list"], timeout=60)
     has_lvgl = any(line.split() and line.split()[0].lower() == ARD_LIB for line in libs.out.splitlines())
-    return (PASS, f"{version}; {ARD_CORE_ID} {ARD_CORE_VERSION}; {ARD_LIB} {'installed' if has_lvgl else 'NOT installed (tier-2)'}")
+    return (
+        PASS,
+        f"{version}; {ARD_CORE_ID} {ARD_CORE_VERSION}; {ARD_LIB} "
+        f"{'installed' if has_lvgl else 'NOT installed (tier-2)'}",
+        required,
+    )
 
 
 def _disk_details(ctx: Ctx) -> tuple[str, str]:
@@ -165,8 +182,8 @@ def run_doctor(ctx: Ctx, runner: Runner | None = None) -> list[Check]:
     else:
         checks.append(Check("network", PASS, "not probed (fetching only via './cb deps')"))
 
-    ard_status, ard_detail = _arduino_details(runner)
-    checks.append(Check("arduino-cli", ard_status, ard_detail))
+    ard_status, ard_detail, ard_fatal = _arduino_details(ctx, runner)
+    checks.append(Check("arduino-cli", ard_status, ard_detail, fatal=ard_fatal))
 
     disk_status, disk_detail = _disk_details(ctx)
     checks.append(Check("disk", disk_status, disk_detail))

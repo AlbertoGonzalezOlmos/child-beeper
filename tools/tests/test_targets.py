@@ -47,7 +47,7 @@ class TestDiscovery(TempRepoTest):
         make_repo(self.root, arduino=True)
         ctx = ctx_for(self.root)
         names = {t.name for t in targets.discover(ctx) if t.kind == "arduino"}
-        self.assertEqual(names, {"01_smoke"})
+        self.assertEqual(names, {"rgb_blink", "button_events"})
         ctx_no_ard = ctx_for(self.root, no_arduino=True)
         self.assertFalse([t for t in targets.discover(ctx_no_ard) if t.kind == "arduino"])
 
@@ -71,7 +71,17 @@ class TestDiscovery(TempRepoTest):
         chosen = targets.resolve(ctx, ["all"])
         self.assertEqual(
             [t.name for t in chosen],
-            ["app", "01_lcd_hello", "02_rgb_button", "03_battery", "04_imu", "05_sdcard", "06_dashboard", "01_smoke"],
+            [
+                "app",
+                "01_lcd_hello",
+                "02_rgb_button",
+                "03_battery",
+                "04_imu",
+                "05_sdcard",
+                "06_dashboard",
+                "button_events",
+                "rgb_blink",
+            ],
         )
 
 
@@ -121,7 +131,7 @@ class TestCliSurface(TempRepoTest):
     def test_list_runs_without_targets(self) -> None:
         import cb as cli
 
-        make_repo(self.root, app=False, examples=(), host_tests=False)
+        make_repo(self.root, app=False, examples=(), host_tests=False, arduino=False)
         os.environ["CB_BUILD_ROOT"] = str(self.root / "build/x")
         out = io.StringIO()
         with use_repo(self.root), redirect_stdout(out):
