@@ -325,7 +325,7 @@ class TestParseMalformed(unittest.TestCase):
         self._reject(
             _replace(GOLD, "ITEM:lcd PASS lvgl=9.5.0 frames=1",
                      "ITEM:lcd PASS lvgl=9.5.0 frames=0"),
-            "lcd PASS has frames=0, expected 1",
+            "lcd PASS has frames=0, expected an integer >= 1",
         )
 
     def test_rgb_pass_wrong_cap_rejected(self) -> None:
@@ -377,6 +377,108 @@ class TestParseMalformed(unittest.TestCase):
                      "ITEM:battery PASS battery_mv=4221 battery_mv=4221 calibrated=1 plausible=1"),
             "duplicate key 'battery_mv'",
         )
+
+    # ---- round 3 (FIX-BRIEF-item6-r3): the remaining false-PASS paths ----
+
+    def test_selftest_end_after_result_rejected(self) -> None:
+        # Round 3: any line containing SELFTEST is contract content — an END
+        # line after RESULT is trailing garbage, not tolerated noise.
+        self._reject(GOLD + ["SELFTEST END"], "contract line after RESULT")
+
+    def test_selftest_end_between_items_rejected(self) -> None:
+        lines = GOLD[:6] + ["SELFTEST END"] + GOLD[6:]
+        self._reject(lines, "malformed SELFTEST line")
+
+    def test_selftest_garbage_line_rejected(self) -> None:
+        # A SELFTEST-mentioning line after BEGIN but outside the grammar.
+        lines = GOLD[:4] + ["boot noise mentions SELFTEST oddly"] + GOLD[4:]
+        self._reject(lines, "malformed SELFTEST line")
+
+    def test_selftest_garbage_before_begin_rejected(self) -> None:
+        lines = ["boot noise mentions SELFTEST oddly"] + GOLD
+        self._reject(lines, "contract line before SELFTEST BEGIN")
+
+    def test_trailing_selftest_begin_rejected(self) -> None:
+        self._reject(
+            GOLD + ["SELFTEST BEGIN version=1 cb_bsp=0.5.0"],
+            "contract line after RESULT",
+        )
+
+    def test_sd_pass_mounted_zero_rejected(self) -> None:
+        lines = _replace(GOLD, "ITEM:sd SKIP reason=no-card",
+                         "ITEM:sd PASS mounted=0 width=4")
+        lines = _replace(lines, "RESULT:PASS total=7 pass=5 fail=0 skip=2",
+                         "RESULT:PASS total=7 pass=6 fail=0 skip=1")
+        self._reject(lines, "sd PASS has mounted=0, expected 1")
+
+    def test_sd_pass_width_zero_rejected(self) -> None:
+        lines = _replace(GOLD, "ITEM:sd SKIP reason=no-card",
+                         "ITEM:sd PASS mounted=1 width=0")
+        lines = _replace(lines, "RESULT:PASS total=7 pass=5 fail=0 skip=2",
+                         "RESULT:PASS total=7 pass=6 fail=0 skip=1")
+        self._reject(lines, "sd PASS has width=0, expected 1|4")
+
+    def test_sd_pass_with_card_accepted(self) -> None:
+        # Positive control: the mounted-card variant the README documents.
+        lines = _replace(GOLD, "ITEM:sd SKIP reason=no-card",
+                         "ITEM:sd PASS mounted=1 width=4")
+        lines = _replace(lines, "RESULT:PASS total=7 pass=5 fail=0 skip=2",
+                         "RESULT:PASS total=7 pass=6 fail=0 skip=1")
+        ok, detail, skipped = _parse_selftest(lines)
+        self.assertTrue(ok, detail)
+        self.assertEqual(skipped, 1)
+
+    def test_battery_mv_out_of_range_rejected(self) -> None:
+        self._reject(
+            _replace(GOLD, "ITEM:battery PASS battery_mv=4221 pin_mv=1397 calibrated=1 plausible=1",
+                     "ITEM:battery PASS battery_mv=1200 pin_mv=398 calibrated=1 plausible=1"),
+            "battery PASS has battery_mv=1200, expected an integer in [2500, 4500]",
+        )
+
+    def test_battery_mv_not_integer_rejected(self) -> None:
+        self._reject(
+            _replace(GOLD, "ITEM:battery PASS battery_mv=4221 pin_mv=1397 calibrated=1 plausible=1",
+                     "ITEM:battery PASS battery_mv=abc pin_mv=1397 calibrated=1 plausible=1"),
+            "battery PASS has battery_mv=abc, expected an integer in [2500, 4500]",
+        )
+
+    def test_mag_g_not_a_number_rejected(self) -> None:
+        self._reject(
+            _replace(GOLD, "ITEM:imu PASS addr=0x6B who=0x05 mag_g=0.99",
+                     "ITEM:imu PASS addr=0x6B who=0x05 mag_g=abc"),
+            "imu PASS has mag_g=abc, expected a finite float in [0.5, 1.5]",
+        )
+
+    def test_mag_g_not_finite_rejected(self) -> None:
+        for bad in ("nan", "inf", "-inf"):
+            self._reject(
+                _replace(GOLD, "ITEM:imu PASS addr=0x6B who=0x05 mag_g=0.99",
+                         f"ITEM:imu PASS addr=0x6B who=0x05 mag_g={bad}"),
+                f"imu PASS has mag_g={bad}, expected a finite float in [0.5, 1.5]",
+            )
+
+    def test_mag_g_out_of_range_rejected(self) -> None:
+        for bad in ("0.1", "9.9"):
+            self._reject(
+                _replace(GOLD, "ITEM:imu PASS addr=0x6B who=0x05 mag_g=0.99",
+                         f"ITEM:imu PASS addr=0x6B who=0x05 mag_g={bad}"),
+                f"imu PASS has mag_g={bad}, expected a finite float in [0.5, 1.5]",
+            )
+
+    def test_frames_not_integer_rejected(self) -> None:
+        self._reject(
+            _replace(GOLD, "ITEM:lcd PASS lvgl=9.5.0 frames=1",
+                     "ITEM:lcd PASS lvgl=9.5.0 frames=x"),
+            "lcd PASS has frames=x, expected an integer >= 1",
+        )
+
+    def test_frames_two_accepted(self) -> None:
+        # Round 3 relaxed frames from exactly 1 to any integer >= 1.
+        lines = _replace(GOLD, "ITEM:lcd PASS lvgl=9.5.0 frames=1",
+                         "ITEM:lcd PASS lvgl=9.5.0 frames=2")
+        ok, detail, skipped = _parse_selftest(lines)
+        self.assertTrue(ok, detail)
+        self.assertEqual(skipped, 2)
 
 
 class TestTargetChoice(unittest.TestCase):

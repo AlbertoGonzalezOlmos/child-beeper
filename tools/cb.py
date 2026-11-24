@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import shutil
@@ -319,15 +320,60 @@ _RESULT_RE = re.compile(
 )
 _KV_RE = re.compile(r"^[a-z0-9_]+=[^\s=]+$")
 
-# FIX-BRIEF-item6 (round 2): the exact evidence a PASS line must carry per item
-# (None = key must be present with any value; a tuple = allowed values).
+# FIX-BRIEF-item6 (rounds 2+3): the exact evidence a PASS line must carry per
+# item. Each entry is (spec, expected-text): spec None = any value; a tuple =
+# the allowed exact strings; a callable = numeric sanity (round 3).
+
+def _int_in(lo: int, hi: int):
+    def _check(value: str) -> bool:
+        try:
+            v = int(value)
+        except ValueError:
+            return False
+        return lo <= v <= hi
+
+    return _check
+
+
+def _int_at_least(n: int):
+    def _check(value: str) -> bool:
+        try:
+            return int(value) >= n
+        except ValueError:
+            return False
+
+    return _check
+
+
+def _finite_float_in(lo: float, hi: float):
+    def _check(value: str) -> bool:
+        try:
+            v = float(value)
+        except ValueError:
+            return False
+        return math.isfinite(v) and lo <= v <= hi
+
+    return _check
+
+
 _PASS_EVIDENCE = {
-    "lifecycle": {"init": ("ESP_OK",)},
-    "lcd": {"lvgl": None, "frames": ("1",)},
-    "rgb": {"cap_percent": ("20",)},
-    "battery": {"battery_mv": None, "plausible": ("1",), "calibrated": ("1",)},
-    "imu": {"addr": ("0x6A", "0x6B"), "who": ("0x05",), "mag_g": None},
-    "sd": {},
+    "lifecycle": {"init": (("ESP_OK",), "ESP_OK")},
+    "lcd": {
+        "lvgl": (None, "a version"),
+        "frames": (_int_at_least(1), "an integer >= 1"),
+    },
+    "rgb": {"cap_percent": (("20",), "20")},
+    "battery": {
+        "battery_mv": (_int_in(2500, 4500), "an integer in [2500, 4500]"),
+        "plausible": (("1",), "1"),
+        "calibrated": (("1",), "1"),
+    },
+    "imu": {
+        "addr": (("0x6A", "0x6B"), "0x6A|0x6B"),
+        "who": (("0x05",), "0x05"),
+        "mag_g": (_finite_float_in(0.5, 1.5), "a finite float in [0.5, 1.5]"),
+    },
+    "sd": {"mounted": (("1",), "1"), "width": (("1", "4"), "1|4")},
     "button": {},
 }
 _BUTTON_LINE_FIELDS = ["poller=running"]   # after "reason=needs-human": the exact frozen line
@@ -366,7 +412,13 @@ def _parse_selftest(lines: list[str]) -> tuple[bool, str, int]:
     payload = [_selftest_payload(ln) for ln in lines]
 
     def contract(line: str) -> bool:
-        return "ITEM:" in line or "RESULT:" in line or line.startswith("SELFTEST BEGIN")
+        # Round 3: ANY line containing SELFTEST is contract content too — it
+        # must be a well-formed BEGIN or the run FAILs.
+        return (
+            "ITEM:" in line
+            or "RESULT:" in line
+            or "SELFTEST" in line
+        )
 
     begin_idx = next((i for i, ln in enumerate(payload) if ln.startswith("SELFTEST BEGIN")), None)
     if begin_idx is None:
@@ -401,8 +453,10 @@ def _parse_selftest(lines: list[str]) -> tuple[bool, str, int]:
             result_line = ln
             continue
         if "ITEM:" not in ln:
-            if ln.startswith("SELFTEST BEGIN"):
-                return False, "second SELFTEST BEGIN line", 0
+            if "SELFTEST" in ln:
+                if ln.startswith("SELFTEST BEGIN"):
+                    return False, "second SELFTEST BEGIN line", 0
+                return False, f"malformed SELFTEST line: '{ln}'", 0
             continue  # boot/driver noise between BEGIN and the items
         # An ITEM line: grammar-check it and place it in the frozen order.
         im = _ITEM_RE.match(ln)
@@ -454,11 +508,10 @@ def _parse_selftest(lines: list[str]) -> tuple[bool, str, int]:
                 return False, f"{status} item without key=value evidence: '{ln}'", 0
             if status == "PASS":
                 required = _PASS_EVIDENCE.get(tok, {})
-                for key, allowed in required.items():
+                for key, (spec, want) in required.items():
                     if key not in kv:
                         return False, f"{tok} PASS missing required evidence key '{key}'", 0
-                    if allowed is not None and kv[key] not in allowed:
-                        want = "|".join(allowed)
+                    if spec is not None and not (kv[key] in spec if isinstance(spec, tuple) else spec(kv[key])):
                         return False, (
                             f"{tok} PASS has {key}={kv[key]}, expected {want}"
                         ), 0
@@ -535,8 +588,10 @@ def cmd_selftest(args: argparse.Namespace) -> int:
                 result_at[0] = time.monotonic()
             return False
         payload = _selftest_payload(line)
-        return "ITEM:" in payload or "RESULT:" in payload or payload.startswith(
-            "SELFTEST BEGIN"
+        return (
+            "ITEM:" in payload
+            or "RESULT:" in payload
+            or "SELFTEST" in payload
         )
 
     def _drain_expired() -> bool:
