@@ -1,11 +1,13 @@
 # Verification — what is proven, how, and what still needs the board
 
-> Status (updated for item 5): item-4 full gate is **13 pass, 0 fail, 2 skip**, with item-2/3/4
+> Status (updated for item 6): item-4 full gate is **13 pass, 0 fail, 2 skip**, with item-2/3/4
 > serial checks **hardware-verified** as detailed below. Item-5's full gate is **14 pass, 0 fail,
-> 2 skip** and its no-card degraded path is **hardware-verified 2026-11-23**. Root 0.4.0 and all
-> mounted SD operations remain **PENDING**. Display/LED visuals, button gestures, multimeter
-> accuracy, IMU motion/accuracy/bias calibration and mounted SD I/O remain PENDING (needs human/card).
-> Details and dates follow.
+> 2 skip** and its no-card degraded path is **hardware-verified 2026-11-23**. Item-6's **15 pass,
+> 0 fail, 2 skip** full gate and serial-half self-test capture are recorded. Its final round-2
+> full gate, root 0.5.0 regression, live/alive soak and dashboard visual checks are **PENDING**.
+> Earlier root-version and mounted SD captures retain their historical status. Display/LED visuals, button gestures, multimeter accuracy, IMU
+> motion/accuracy/bias calibration and mounted SD I/O remain PENDING (needs human/card). Details
+> and measured dates follow; no item-6 example below is itself hardware evidence.
 
 This repo distinguishes two levels of proof, and every doc/report must say which one applies:
 
@@ -73,6 +75,22 @@ Rule (also in `AGENTS.md`): *never claim hardware-verified without a board.*
   heartbeat: the no-card degraded path is **hardware-verified**. **A mount error is not proof that
   no card exists.** Mounted width, capacity, round-trip, clean unmount and successful 1-bit fallback
   remain **PENDING**; exact lines are in checklist 9 below.
+- **Item-6 coordinator gate/serial status**: the full gate on the reviewed implementation completed
+  **15 pass, 0 fail, 2 skip**; app and all six examples built, sdkconfig-assert passed all **seven**
+  targets, host tests passed **47**, and CLI tests passed **152**. The 2026-11-23 hardware-session
+  record gives checklist 10 a **serial-half PASS**: `./cb selftest` exited 0 with the seven ordered
+  items, real battery/IMU values, `RESULT:PASS total=7 pass=5 fail=0 skip=2`, and
+  `2 skipped (unverified)`. The full gate after the round-2 parser/target fixes, live/alive soak,
+  dashboard visuals, mounted-card variant and root 0.5.0 regression remain **PENDING**; exact
+  measured lines are in checklist 10 below.
+- **Item-6 docs-lane checks (2026-11-24; supplementary, not the full gate)**: with
+  `CB_BUILD_ROOT=build/kimi-k31-pro`, `./cb test` passed all **47** host tests (`# failed 0`),
+  `python3 -m unittest discover -s tools/tests -t . -q` passed **152** tests, and
+  `./cb build app 06_dashboard` passed both targets with the 0.5.0 BSP header (`06_dashboard.bin`
+  **685168 bytes**). With the dashboard and all seven locks present, `./cb verify --fast` completed
+  **7 pass, 0 fail, 10 skip**, including `deps-pins` on seven locks and the expected
+  `build:06_dashboard` SKIP in fast mode. The coordinator's full gate and serial-half capture are
+  recorded above; the final round-2 gate and the remaining hardware checks stay PENDING.
 - **Item-3 round-1 agent-side checks (2026-11-23; supplementary, not the full gate)**: with
   `CB_BUILD_ROOT=build/kimi-k31-pro`, `./cb test` passed all **39** host tests (`# failed 0`),
   `./cb verify --fast` completed **7 pass, 0 fail, 7 skip** (109 CLI tests), and
@@ -142,10 +160,20 @@ Steps run in a **fixed order** with **stable ids**; each prints `[PASS]/[FAIL]/[
    forbidden (SD9/R11b). No pure helper is introduced. The existing **47** tests, including all six
    SD pin values and GPIO uniqueness, remain the host regression suite; mount, fallback, VFS info,
    unmount and file IO require source review plus real-card evidence, not mocked host success.
+   Item 6 likewise adds **no new pure C helper or host test**: `cb_bsp_part_result()` records from
+   the real IDF-only `k_parts[]` init loop, which cannot be exercised without forbidden IDF stubs.
+   Its build/source review and the coordinator dashboard capture are the evidence; the existing 47
+   pure-C tests remain the host regression suite. The versioned self-test parser is Python instead.
 3. `cli-tests` — the CLI's own unit tests:
    `python3 -m unittest discover -s tools/tests -t . -q` (a missing `tools/tests/` is a FAIL,
-   owner deepseek-flash). Item 4's suite had **112 tests**. Item 5 adds one missing-lock test and
-   two required-target negatives (full + fast), making the current suite **115 tests**.
+   owner deepseek-flash). Item 4's suite had **112 tests**. Item 5 added one missing-lock test and
+   two required-target negatives (full + fast), making its suite **115 tests**. Item 6 adds the
+   static `test_selftest.py` golden PASS / one-item RESULT:FAIL and malformed-output matrix,
+   including prefixed+ANSI input, absent-SKIP arithmetic, target preference and trailing live/alive
+   handling. Round 2 adds required-06 deletion protection, duplicate BEGIN/token and illegal-SKIP rejection,
+   exact button/poller and per-item evidence checks, duplicate-key rejection, and the post-RESULT
+   trailing drain. The current item-6 suite is **170 tests** at `acd83ef`; it needs no board or
+   network.
 4. `pin-drift` — byte-compares Arduino copies of the shared headers against
    `components/cb_bsp/include/`. **SKIP while `arduino/` is absent.**
 5. `audit-static` — forbidden constructs + absolute-path scan (scope below).
@@ -153,14 +181,15 @@ Steps run in a **fixed order** with **stable ids**; each prints `[PASS]/[FAIL]/[
    **esp_lvgl_port 2.9.0**, **led_strip 3.1.1**, **idf 6.1.0**, and
    `components/cb_bsp/idf_component.yml` must pin those three exactly (no `^`/`~`/`>=` ranges).
    A missing/stale lock FAILs with a `./cb deps` hint — run `./cb deps` once after any
-   manifest/lock change (ruling A9). Item 5 has six project locks: root, `01_lcd_hello`,
-   `02_rgb_button`, `03_battery`, `04_imu`, and `05_sdcard`. Each example lock is committed by the
-   example owner after its first successful build; dependency versions themselves do not change.
+   manifest/lock change (ruling A9). Item 5 had six project locks; item 6 adds `06_dashboard`,
+   making **seven** (root plus six examples). Each example lock is committed by the example owner
+   after its first successful build; dependency versions themselves do not change.
 7. `build:app` — builds the root app (`main/` "hello beeper").
 8. `build:<example>` — one step per `examples/*`. Item 3 adds required steps
    `build:02_rgb_button` and `build:03_battery` after `build:01_lcd_hello`; item 4 adds
    `build:04_imu`, and item 5 adds required `build:05_sdcard` with the same missing-target FAIL
-   semantics in full and fast modes.
+   semantics in full and fast modes. Item 6 adds required `build:06_dashboard` after them with the
+   same deletion protection; its targeted build and fast-gate checks are recorded below.
 9. `sdkconfig-assert` — per built target: OCT PSRAM, PSRAM 80 M, 16 MB flash, USB-Serial/JTAG
    console, custom partition table; plus the built partition binary exists and the table contains
    `factory,app,factory,0x10000,3M` and `storage,data,fat,0x310000,0x800000`.
@@ -170,7 +199,7 @@ Steps run in a **fixed order** with **stable ids**; each prints `[PASS]/[FAIL]/[
    `CONFIG_LV_FONT_DEFAULT_MONTSERRAT_14=y`, `CONFIG_LV_FONT_MONTSERRAT_14=y`,
    `CONFIG_LV_USE_LABEL=y`, `CONFIG_LV_USE_IMAGE=y`; and **forbids** `CONFIG_LV_CONF_MINIMAL=y`.
    Absence of any `CONFIG_LV_` config in those two targets is a **FAIL, not a skip**. For every
-   other target, including 02/03/04/05, the same eight keys are checked **whenever any `CONFIG_LV_*`
+   other target, including 02/03/04/05/06, the same eight keys are checked **whenever any `CONFIG_LV_*`
    entry is present**; cb_bsp's manifest normally makes them present even though those examples
    do not call LVGL. (`CONFIG_LV_OS_NONE=y` is deliberate: esp_lvgl_port owns the LVGL task;
    demanding an `LV_OS_FREERTOS`-style setting would fail a correct build.)
@@ -182,15 +211,16 @@ Steps run in a **fixed order** with **stable ids**; each prints `[PASS]/[FAIL]/[
     durations, app sizes via `idf.py size --format json` when it succeeds, `.bin`-size fallback
     otherwise). `./cb report` prints the markdown.
 
-**Item-1 strictness + item-3 R9b + item-4 R25 + item-5 SD13:** `tests/host/Makefile`, `build:app`,
-`build:01_lcd_hello`, `build:02_rgb_button`, `build:03_battery`, `build:04_imu`, and
-`build:05_sdcard` are *required* — missing files make those steps **FAIL**, not SKIP, even in
-`--fast` mode. Full and fast missing-05 tests both require detail
-`examples/05_sdcard missing (CMakeLists.txt not found)`. SKIP is legitimate only for `pin-drift`,
+**Item-1 strictness + item-3 R9b + item-4 R25 + item-5 SD13 + item-6 round 2:**
+`tests/host/Makefile`, `build:app`, `build:01_lcd_hello`, `build:02_rgb_button`,
+`build:03_battery`, `build:04_imu`, `build:05_sdcard`, and `build:06_dashboard` are *required* —
+missing files make those steps **FAIL**, not SKIP, even in `--fast` mode. Full and fast missing-06
+tests both require detail `examples/06_dashboard missing (CMakeLists.txt not found)`, just as the
+missing-05 tests require the equivalent 05 detail. SKIP is legitimate only for `pin-drift`,
 `arduino:*` (no `arduino/` tree yet), build and dependent `sdkconfig-assert` steps deliberately
-skipped by `--fast`, and `--offline` sub-checks when `unshare` is unavailable. With all item-5
+skipped by `--fast`, and `--offline` sub-checks when `unshare` is unavailable. With all item-6
 projects present, a normal full gate still has the two expected Arduino-related SKIPs;
-sdkconfig-assert covers **six** targets (app + five examples).
+sdkconfig-assert covers **seven** targets (app + six examples).
 
 **Exit codes:** a FAIL in `doctor` → **3**; any other FAIL → **1**; all PASS/SKIP → **0**.
 (Globally: 0 ok, 1 build/test failure, 2 board/port absent, 3 usage/environment.)
@@ -432,8 +462,90 @@ Procedure per line: run the command, compare with "expected", tick and fill in d
         destructive card test.
       - [ ] **Remaining hardware checks — PENDING (needs card/human)**: sustained IO, hot removal,
         internal-pull-up signal integrity, collision/error paths and user-data preservation.
-- [ ] 10. (item 6+) `./cb selftest` → `SELFTEST`/`ITEM:`/`RESULT:` lines, `RESULT` all PASS
-      (serial contract frozen in item 6).
+- [ ] 10. (item 6) **Seven-part self-test + LVGL dashboard — serial-half PASS 2026-11-23;
+      final round-2 gate, live/alive soak, visuals, mounted card, root regression and human checks
+      PENDING.** The gold-standard bench report is the following no-card/no-finger sequence. Its
+      arithmetic is five PASS, zero FAIL, two SKIP; both SKIPs remain unverified even though the
+      overall command exits 0.
+
+      ```text
+      SELFTEST BEGIN version=1 cb_bsp=0.5.0
+      ITEM:lifecycle PASS init=ESP_OK
+      ITEM:lcd PASS lvgl=9.5.0 frames=1
+      ITEM:rgb PASS cap_percent=20
+      ITEM:button SKIP reason=needs-human poller=running
+      ITEM:battery PASS battery_mv=4221 pin_mv=1397 calibrated=1 plausible=1
+      ITEM:imu PASS addr=0x6B who=0x05 mag_g=0.99
+      ITEM:sd SKIP reason=no-card
+      RESULT:PASS total=7 pass=5 fail=0 skip=2
+      ```
+
+      - [x] **Reviewed-implementation full gate + parser suite — PASS**: the coordinator's
+        `CB_BUILD_ROOT=build/coordinator ./cb verify` completed **15 pass, 0 fail, 2 skip**;
+        `build:06_dashboard` was present, sdkconfig-assert covered **seven** targets, host tests
+        passed **47**, and the static Python suite passed **152**. The suite covers the golden PASS,
+        a valid one-item RESULT:FAIL, and malformed version/count/order/tokens/reasons/evidence /
+        arithmetic/RESULT cases without a board or IDF stubs. The BSP result recorder remains
+        IDF-only lifecycle bookkeeping, so no new pure-C host test is claimed.
+      - [ ] **Final round-2 full gate — PENDING**: rerun after the required-target, parser-strictness
+        and trailing-drain fixes, then replace this with the actual totals. The parser must reject a
+        second BEGIN, duplicate/unknown tokens, every SKIP outside button/SD, button without exact
+        `poller=running`, missing or false per-item evidence (including `calibrated=0` battery PASS),
+        arithmetic/terminal violations, and any trailing ITEM/RESULT/SELFTEST in the ~2 s drain.
+        The docs-lane `python3 -m unittest discover -s tools/tests -t . -q` rerun at `acd83ef`
+        passed **170/170** tests; only the coordinator's new full gate remains unrecorded.
+      - [x] **Golden serial + process result — PASS 2026-11-23**: the coordinator flashed
+        `06_dashboard` and ran `./cb selftest`; it exited **0** and printed
+        **`2 skipped (unverified)`**. The measured report preserves the exact gold shapes/order and
+        arithmetic, with real battery **4209 mV**, pin **1393 mV**, calibrated=1, and IMU **0x6B**,
+        WHO **0x05**, resting magnitude **1.00 g**:
+
+        ```text
+        SELFTEST BEGIN version=1 cb_bsp=0.5.0
+        ITEM:lifecycle PASS init=ESP_OK
+        ITEM:lcd PASS lvgl=9.5.0 frames=1
+        ITEM:rgb PASS cap_percent=20
+        ITEM:button SKIP reason=needs-human poller=running
+        ITEM:battery PASS battery_mv=4209 pin_mv=1393 calibrated=1 plausible=1
+        ITEM:imu PASS addr=0x6B who=0x05 mag_g=1.00
+        ITEM:sd SKIP reason=no-card
+        RESULT:PASS total=7 pass=5 fail=0 skip=2
+        live bat=4209mV plausible=1 imu_mag=1.00g addr=0x6B
+        [PASS] selftest RESULT:PASS total=7 pass=5 fail=0 skip=2
+        cb: 2 skipped (unverified)
+        ```
+
+        This verifies the serial grammar, ordering, arithmetic, calibrated battery snapshot, IMU
+        identity/resting reading, one immediate post-RESULT live line, and CLI exit/SKIP behavior.
+        It does not verify the two SKIPs, visual pixels, gestures, mounted SD, or live/alive
+        cadence. `RESULT:PASS` requires `fail=0`; RESULT:FAIL and malformed/timeout output exit 1;
+        no port exits 2 before build/flash. Target preference is 06 → 07 → 08, with no new flags.
+      - [ ] **Live/alive soak — PENDING**: RESULT ends the contract, not serial output. In a separate
+        monitor capture of at least 15 s after the self-test, require the combined live line every
+        ~2 s and `dashboard: alive #N` every ~5 s with accumulating cadence and no WDT/reset. A
+        valid example using the same snapshot is
+        `live bat=4221mV plausible=1 imu_mag=0.99g addr=0x6B`; unavailable fields are exactly
+        `bat=NAmV`, `imu_mag=NAg`, and/or `addr=0x00`, never stale data. Record timestamps and
+        actual numbers rather than treating this example as evidence.
+      - [ ] **Dashboard visual check (human) — PENDING**: confirm the `cb_bsp=0.5.0` title, all
+        seven legible status rows in order, live battery mV/plausible and IMU magnitude/address
+        rows, and a changing alive tick. Check clipping, colours, geometry and tearing. Serial
+        `frames=1` proves the example's first LVGL flush only; it cannot tick any visual box.
+      - [ ] **Mounted-card variant — PENDING (needs a known usable card)**: if available, repeat
+        self-test with the card state known and record the actual SD evidence/width and recomputed
+        RESULT. Mounted state is the only item-6 SD claim; capacity, file round-trips, successful
+        1-bit fallback, unmount, hot removal and user-data preservation remain checklist-9 work.
+        The golden `reason=no-card` is an unverified no-card/mount state, not proof of physical slot
+        emptiness because the board has no card-detect pin.
+      - [ ] **Root 0.5.0 regression — PENDING**: flash `app` separately and capture
+        `cb_bsp=0.5.0 init(CB_PART_ALL)=ESP_OK` plus continuing `hello_beeper: alive #N`. This
+        proves the new build stamp/strict lifecycle only, not optional-part health.
+      - [ ] **Human/electrical limits — remain PENDING unless separately observed**: RGB visible
+        colour/brightness, BOOT PRESS/RELEASE/CLICK/DOUBLE_CLICK/LONG_PRESS gestures, battery
+        multimeter accuracy and physical cell presence, IMU motion/axis/full-scale accuracy/bias
+        calibration and signal integrity, and every uninjected driver failure path. Button is
+        always `SKIP reason=needs-human poller=running`; a press window never makes it PASS. No
+        Wi-Fi/eighth item is added, and SKIP is never hardware verification.
 - [ ] 11. (item 7+) One Arduino sketch flashed via `./cb arduino` behaves like its IDF twin;
       `Serial` output visible over Type-C (CDC on boot).
 - [ ] 12. (item 8+) Wi-Fi scan lists APs; BLE scan lists advertisers.

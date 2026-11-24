@@ -49,7 +49,7 @@ class BuildSimRunner(FakeRunner):
         self.reply("cb.py flash", 2, "", HINT)
         self.reply("cb.py monitor", 2, "", HINT)
         self.reply("make test", 0, "ok - all\n1..1\n")
-        self.reply("-m unittest discover", 0, "", "Ran 115 tests in 0.1s\n\nOK\n")
+        self.reply("-m unittest discover", 0, "", "Ran 185 tests in 0.1s\n\nOK\n")
 
     def run_idf(self, args, *, cwd, timeout=3600.0):  # type: ignore[override]
         result = super().run_idf(args, cwd=cwd)
@@ -90,7 +90,7 @@ _run_verify.last_output = ""  # type: ignore[attr-defined]
 class TestVerifyHappyPath(TempRepoTest):
     def setUp(self) -> None:
         super().setUp()
-        # Post-item-5 default tree (support.make_repo): app + 01..05 examples.
+        # Post-item-6 default tree (support.make_repo): app + 01..06 examples.
         make_repo(self.root)
         os.environ["CB_FORCE_NO_PORTS"] = "1"
 
@@ -112,6 +112,7 @@ class TestVerifyHappyPath(TempRepoTest):
                 "build:03_battery",
                 "build:04_imu",
                 "build:05_sdcard",
+                "build:06_dashboard",
                 "sdkconfig-assert",
                 "arduino:*",
                 "guards-no-board",
@@ -292,6 +293,34 @@ class TestVerifyFailures(TempRepoTest):
         self.assertEqual(
             by_id["build:05_sdcard"].detail,
             "examples/05_sdcard missing (CMakeLists.txt not found)",
+        )
+        self.assertEqual(code, 1)
+
+    def test_missing_item6_example_fails(self) -> None:
+        make_repo(
+            self.root,
+            examples=("01_lcd_hello", "02_rgb_button", "03_battery", "04_imu", "05_sdcard"),
+        )
+        code, results, _ = _run_verify(self.root)
+        by_id = {r.id: r for r in results}
+        self.assertEqual(by_id["build:06_dashboard"].status, "FAIL")
+        self.assertEqual(
+            by_id["build:06_dashboard"].detail,
+            "examples/06_dashboard missing (CMakeLists.txt not found)",
+        )
+        self.assertEqual(code, 1)
+
+    def test_fast_mode_still_fails_without_item6_example(self) -> None:
+        make_repo(
+            self.root,
+            examples=("01_lcd_hello", "02_rgb_button", "03_battery", "04_imu", "05_sdcard"),
+        )
+        code, results, _ = _run_verify(self.root, fast=True)
+        by_id = {r.id: r for r in results}
+        self.assertEqual(by_id["build:06_dashboard"].status, "FAIL")
+        self.assertEqual(
+            by_id["build:06_dashboard"].detail,
+            "examples/06_dashboard missing (CMakeLists.txt not found)",
         )
         self.assertEqual(code, 1)
 

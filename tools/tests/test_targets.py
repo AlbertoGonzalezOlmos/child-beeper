@@ -71,7 +71,7 @@ class TestDiscovery(TempRepoTest):
         chosen = targets.resolve(ctx, ["all"])
         self.assertEqual(
             [t.name for t in chosen],
-            ["app", "01_lcd_hello", "02_rgb_button", "03_battery", "04_imu", "05_sdcard", "01_smoke"],
+            ["app", "01_lcd_hello", "02_rgb_button", "03_battery", "04_imu", "05_sdcard", "06_dashboard", "01_smoke"],
         )
 
 

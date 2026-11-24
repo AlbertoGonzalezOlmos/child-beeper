@@ -1,10 +1,12 @@
 # Hardware reference — Waveshare ESP32-S3-LCD-1.47B
 
-> Status (updated for item 5): chip identity, flash size, PSRAM presence, console and app boot are
+> Status (updated for item 6): chip identity, flash size, PSRAM presence, console and app boot are
 > **hardware-verified**. Item-2 display, item-3 RGB/button/battery and item-4 IMU serial checks are
 > also recorded. Item-5's no-card degraded path was serial-observed on 2026-11-23; mounted I/O and
-> successful fallback remain PENDING. A mount error is not proof of physical card absence. Pin values
-> mirror `components/cb_bsp/include/cb_pins.h`; measurements live in [verification.md](verification.md).
+> successful fallback remain PENDING. Item-6's full gate and serial-half capture are recorded;
+> its final round-2 gate, dashboard visuals and live/alive soak are PENDING. A mount error is not
+> proof of physical card absence. Pin values mirror `components/cb_bsp/include/cb_pins.h`; measurements live in
+> [verification.md](verification.md).
 
 ## Board / SoC
 
@@ -194,6 +196,51 @@ Other frozen constants: `CB_LCD_SPI_HOST 1` (= `SPI2_HOST`; the skeleton-verifie
   mount/error path only: no card answered on either width and the app kept running. It does not
   prove that the slot was empty or that any mounted operation works. Exact capture and remaining
   checks are in [verification.md](verification.md) checklist 9.
+
+## Item-6 self-test dashboard — observation model
+
+The dashboard adds no pins, buses, radios, or new peripheral-driver APIs. It is a labels-only LVGL 9.5 screen
+on the existing **172×320** ST7789, using the same esp_lvgl_port configuration documented above:
+two internal DMA-capable RGB565 draw buffers, the port-owned LVGL task, and finite
+`cb_lcd_lvgl_lock()` acquisitions for every example `lv_*` call. It does not allocate a full-frame
+canvas, call `lv_timer_handler()`, or turn on the backlight itself.
+
+The screen contains a title with `cb_bsp=0.5.0`, seven rows in the serial order **lifecycle, lcd,
+rgb, button, battery, imu, sd**, a live battery row with mV/plausibility, a live IMU row with resting
+magnitude/address, and an alive tick. Live values refresh every **2 s** from the same
+`cb_battery_sample_t` / `cb_imu_sample_t` state used for serial output; alive is printed about every
+**5 s** on an accumulating deadline. The serial live payload is exactly:
+
+```text
+live bat=<mV>mV plausible=<0|1> imu_mag=<g>g addr=0x<AA>
+```
+
+Unavailable sources produce `bat=NAmV`, `imu_mag=NAg`, and/or `addr=0x00`, never a stale number
+labelled as current. See [api.md](api.md#self-test-and-lvgl-dashboard-item-6--st1st8--item6-rulings)
+for the complete seven-item golden report and parser rules.
+
+The hardware meaning is deliberately narrow:
+
+- `frames=1` is an example-observed LVGL refresh-ready event, not visible-pixel proof. A human must
+  still check title/rows, clipping, colours, geometry, live updates and tearing.
+- RGB PASS is an init result and numeric 20% cap, not observed light. Button always SKIPs
+  `needs-human`; poller operation does not verify any physical gesture.
+- A plausible battery sample is not a multimeter measurement or proof that a cell is fitted. The
+  golden `battery_mv=4221 pin_mv=1397 calibrated=1 plausible=1` values are one realistic snapshot,
+  not acceptance constants.
+- `addr=0x6B who=0x05 mag_g=0.99` is identity plus a resting reading inside the example's
+  **0.50–1.50 g** sanity window, not an accuracy threshold. Deliberate motion, axis orientation,
+  accuracy/bias calibration and I2C signal integrity remain separate hardware checks.
+- SD PASS requires a mounted card; the golden no-card line is a SKIP and stays unverified. With no
+  CD/WP pins, `reason=no-card` cannot by itself establish physical slot emptiness or mounted I/O.
+
+**Coordinator serial-half capture — PASS 2026-11-23**: `./cb selftest` exited 0 with the seven
+ordered gold-shaped items and `RESULT:PASS total=7 pass=5 fail=0 skip=2`. Actual evidence was
+`battery_mv=4209 pin_mv=1393 calibrated=1 plausible=1`, `addr=0x6B who=0x05 mag_g=1.00`,
+`live bat=4209mV plausible=1 imu_mag=1.00g addr=0x6B`, and `cb: 2 skipped (unverified)`.
+This verifies the serial contract and those readings, not the two SKIPs or any visual/motion /
+accuracy/card-dependent property. Checklist 10 in [verification.md](verification.md) separates this
+measured serial half from the live/alive soak and all human/electrical/card-dependent PENDING items.
 
 ## RGB LED
 

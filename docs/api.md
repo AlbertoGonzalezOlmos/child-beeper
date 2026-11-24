@@ -1,10 +1,13 @@
-# BSP API reference (items 1–5 — frozen surface)
+# BSP API reference (items 1–6 — frozen surface)
 
-> Status: item-5 SD API frozen by SD1–SD14; its full gate is **14 pass, 0 fail, 2 skip**, and the
-> no-card degraded path is recorded in verification.md. Mounted I/O and the root 0.4.0 capture are
-> PENDING. Item 4 is build-verified (**13 pass, 0 fail, 2 skip**) and its IMU serial capture is
-> recorded in verification.md. Item 3's RGB/button/battery evidence is also recorded there. Only
-> the names on this page are frozen; later self-test APIs require their own review round. Do not
+> Status: item-6 ST1–ST8 and the ITEM6-RULINGS self-test/dashboard contract are frozen here, with
+> BSP version **0.5.0**. The coordinator's **15 pass, 0 fail, 2 skip** full gate and serial-half
+> hardware capture are recorded; the final round-2 gate, visual checks and live/alive soak are
+> PENDING. Item-5's full gate is **14
+> pass, 0 fail, 2 skip**, and its no-card degraded path is recorded in verification.md. Mounted I/O
+> and earlier root-version captures retain their historical status there. Item 4 is build-verified
+> (**13 pass, 0 fail, 2 skip**) and its IMU serial capture is recorded in verification.md. Item 3's
+> RGB/button/battery evidence is also recorded there. Only the names on this page are frozen; do not
 > invent `cb_*` names ahead of their item.
 
 Component: `components/cb_bsp` (local IDF component). Consumers depend on it by path, e.g.
@@ -25,7 +28,7 @@ Headers are flat: `#include "cb_bsp.h"`, `#include "cb_pins.h"`, … (the compon
 
 ```c
 #define CB_BSP_VERSION_MAJOR 0
-#define CB_BSP_VERSION_MINOR 4
+#define CB_BSP_VERSION_MINOR 5
 #define CB_BSP_VERSION_PATCH 0
 
 typedef enum {
@@ -43,7 +46,8 @@ typedef enum {
 } cb_part_t;
 
 esp_err_t cb_bsp_init(uint32_t parts);   /* inits only the requested parts, in fixed order */
-const char *cb_bsp_version(void);        /* "0.4.0" */
+const char *cb_bsp_version(void);        /* "0.5.0" */
+esp_err_t cb_bsp_part_result(cb_part_t part, esp_err_t *out);
 ```
 
 **Fixed init order:** BACKLIGHT → RGB → I2C → IMU → BUTTON → BATTERY → LCD → LVGL → SD
@@ -60,6 +64,26 @@ const char *cb_bsp_version(void);        /* "0.4.0" */
   apps log it and must not abort. `cb_bsp_init(0) == ESP_OK`.
 - `cb_bsp_init` never aborts the boot; `ESP_ERROR_CHECK` on optional hardware inside `cb_bsp` is a
   forbidden construct (enforced by `audit-static`).
+
+### Last per-part init result (item 6 — ST1)
+
+`cb_bsp_part_result()` is the **only** new BSP status surface in item 6. Its return value describes
+the query; `*out` receives the last actual init result recorded by `cb_bsp_init()` for one part:
+
+- `out == NULL` or an unknown/non-single part (`CB_PART_NONE`, `CB_PART_ALL`, a multi-bit mask, or an
+  unknown bit) returns `ESP_ERR_INVALID_ARG`.
+- A valid part never attempted by any `cb_bsp_init()` call returns `ESP_ERR_NOT_FOUND`. Every
+  non-OK query return leaves `*out` untouched.
+- An attempted part returns `ESP_OK` and writes its recorded result to `*out`. This includes an
+  optional-part failure suppressed from the aggregate `cb_bsp_init()` return, and can itself be
+  `ESP_ERR_NOT_FOUND` (for example, an IMU probe that found no device). A separate attempted record
+  distinguishes that actual result from a part that was never attempted.
+- A later init attempt replaces the previous result; a call that does not request the part leaves
+  its record unchanged. Successful parts skipped as already initialized retain `ESP_OK`.
+
+There is no `cb_bsp_status_t`, inited-parts bitmask getter, lifetime pointer, reset API, or second
+status API. The recorder is IDF-dependent lifecycle bookkeeping, not a new pure helper; host tests
+do not use IDF stubs to manufacture a success path.
 
 ## `cb_pins.h` — pure macros, no includes, C89-safe
 
@@ -697,6 +721,106 @@ cannot be brought up, the example emits `W sdcard: no card or mount failed: %s` 
 heartbeat-only operation. The successful unmount line belongs to the driver (`cb_sd: unmounted`),
 not a duplicate example line. Card presence is unknown on this bench: ready/mounted I/O and fallback
 evidence remain PENDING unless the coordinator captures them.
+
+## Self-test and LVGL dashboard (item 6 — ST1–ST8 + ITEM6-RULINGS)
+
+### Versioned serial contract
+
+`examples/06_dashboard` initializes `CB_PART_ALL`, gathers the per-part evidence, renders its first
+frame, and emits the following **gold-standard no-card/no-finger report**. These payloads and their
+field order are byte-exact. The example prints the contract bare with `printf`; the parser also
+accepts the same complete payloads behind a standard ESP_LOG prefix and optional ANSI color codes:
+
+```text
+SELFTEST BEGIN version=1 cb_bsp=0.5.0
+ITEM:lifecycle PASS init=ESP_OK
+ITEM:lcd PASS lvgl=9.5.0 frames=1
+ITEM:rgb PASS cap_percent=20
+ITEM:button SKIP reason=needs-human poller=running
+ITEM:battery PASS battery_mv=4221 pin_mv=1397 calibrated=1 plausible=1
+ITEM:imu PASS addr=0x6B who=0x05 mag_g=0.99
+ITEM:sd SKIP reason=no-card
+RESULT:PASS total=7 pass=5 fail=0 skip=2
+```
+
+The grammar rules are part of the API contract, not suggestions for a best-effort reader:
+
+- `SELFTEST BEGIN version=1` is the first contract line and version 1 is the only accepted grammar
+  version. Exactly seven ITEM lines follow in the frozen order **lifecycle, lcd, rgb, button,
+  battery, imu, sd**. No live or other example data line may interleave inside that sequence.
+- PASS/FAIL items carry meaningful `key=value` evidence. Required PASS evidence includes
+  `lifecycle init=ESP_OK`, `lcd lvgl=<x.y.z> frames=1`, `rgb cap_percent=20`, battery
+  `battery_mv=<n> plausible=1 calibrated=1` (`calibrated=0` is not a PASS), and IMU
+  `addr=0x6A|0x6B who=0x05 mag_g=<f>`. SD SKIP evidence is `reason=no-card|absent`; a mounted SD
+  PASS still reports `mounted=1 width=<1|4>`. Missing/false required evidence is a hard failure,
+  not a free-form PASS.
+- Every SKIP carries `reason=<token>` as its **first** field. `needs-human` is legal only on button;
+  `no-card` and `absent` are legal only on SD. A SKIP on lifecycle/lcd/rgb/battery/imu is invalid —
+  in particular, absence of RGB, battery or IMU on this board is a FAIL, not a SKIP. The unattended
+  button line is always exactly `ITEM:button SKIP reason=needs-human poller=running`; button
+  PASS/FAIL, a missing/stopped poller field, or a press-to-pass shortcut is rejected.
+- Exactly one RESULT terminates the contract; there is no END line. `total=7`,
+  `pass+fail+skip==7`, and the three counts describe the seven actual ITEM verdicts. `RESULT:PASS`
+  requires and means `fail==0`; otherwise the terminal is `RESULT:FAIL` and the CLI lists failing
+  items. RESULT is the last **contract** line, not the end of serial output: the live/alive lines
+  below deliberately start after it.
+- Any line containing `ITEM:` or `RESULT:` that violates the grammar is a hard failure, including a
+  second RESULT or contract content after the terminal. The parser never accepts a partial/best-
+  effort subset.
+
+### What the seven items prove — and do not prove
+
+| Item | Evidence behind the serial verdict | Still not proven |
+|---|---|---|
+| `lifecycle` | Return from `cb_bsp_init(CB_PART_ALL)` (`init=ESP_OK` in the golden run); optional failures are still checked separately | Optional-part health from this line alone |
+| `lcd` | LVGL 9.5.0 is up and the example observed its own first frame flushed (`frames=1`) | Pixel correctness, colours, geometry, legibility or tearing |
+| `rgb` | RGB driver init succeeded; `cap_percent=20` is the frozen numeric cap | Visible colour, brightness or brownout behaviour |
+| `button` | The frozen unattended line carries `poller=running` but always SKIPs `needs-human`; it is not a new gesture/poller measurement | PRESS/RELEASE/CLICK/DOUBLE_CLICK/LONG_PRESS gestures |
+| `battery` | One plausible calibrated sample; the golden fields are one snapshot, not constants | Multimeter accuracy, charge percentage or physical cell presence |
+| `imu` | Answering address, WHO_AM_I 0x05 and a resting magnitude (`mag_g`, in g) inside the example's 0.50–1.50 g sanity window | Motion response, axis orientation, full-scale accuracy or bias calibration |
+| `sd` | Mounted state is PASS when a usable card is mounted; this bench's golden report SKIPs `no-card` | Mounted I/O, negotiated fallback, hot removal, or physical slot emptiness from a mount error |
+
+`cb_bsp_part_result()` supplies last-init truth where needed; the active evidence comes from the
+existing LCD/LVGL state and first-frame event, `cb_battery_read()`, `cb_imu_addr()`,
+`cb_imu_who_am_i()`, `cb_imu_read()`, `cb_sd_mounted()` and `cb_sd_bus_width()`. No new getters or
+status structs are added for those parts. Wi-Fi is not a BSP part and is not an eighth self-test.
+
+### Live serial lines and display ownership
+
+After RESULT, the example owns one combined live data line every **2 s**:
+
+```text
+live bat=<mV>mV plausible=<0|1> imu_mag=<g>g addr=0x<AA>
+```
+
+For example, using the golden snapshot values, the payload is
+`live bat=4221mV plausible=1 imu_mag=0.99g addr=0x6B`. If a source is unavailable, the corresponding
+fields are exactly `bat=NAmV`, `imu_mag=NAg`, and/or `addr=0x00`; a stale value is never presented
+as current. `I (…) dashboard: alive #N` starts at about +5 s and repeats about every 5 s using an
+accumulating deadline. The screen's title/version, seven status rows, battery and IMU rows use the
+same verdict/sample state as these serial lines; the alive tick distinguishes a running app from a
+dead part.
+
+### `./cb selftest` parser and process contract
+
+Target preference is **`06_dashboard` → `07_selftest` → `08_selftest`**. The fallbacks remain so a
+future firmware rename does not silently break the command, but preference is explicit rather than
+set-iteration order. There are no new CLI flags.
+
+The Python parser validates exactly one first BEGIN/version, all seven tokens/order/verdicts,
+required per-item evidence, the button's exact line, legal SKIP token/reason pairs, malformed
+ITEM/RESULT lines, exactly one terminal RESULT, item/result counts, arithmetic, and the
+PASS/fail-zero / FAIL/fail-nonzero invariants. After the first RESULT, `./cb selftest` keeps listening
+for an approximately **2 s drain** and rejects any trailing ITEM/RESULT/SELFTEST contract line;
+ordinary live/alive lines remain legal. The static host suite covers the golden PASS, a valid
+one-item RESULT:FAIL, and one negative for every rule above, including duplicate BEGIN, false
+battery calibration evidence and trailing drain garbage.
+
+- Overall valid PASS: print **`N skipped (unverified)`** and exit **0**. Two SKIPs in the golden run
+  are therefore explicitly unverified even though the command succeeds.
+- Valid RESULT:FAIL or any grammar/timeout failure: name the failed rule/items and exit **1**.
+- No serial port: the existing guard runs before build/flash and exits **2** with the BOOT+RESET
+  recovery hint. Build/flash failures also remain failures, never parser successes.
 
 ## Threading / LVGL rules
 

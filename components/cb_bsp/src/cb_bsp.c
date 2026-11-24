@@ -31,6 +31,7 @@
 #include "cb_rgb.h"
 #include "cb_sd.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
 
 static const char *TAG = "cb_bsp";
 
@@ -61,6 +62,24 @@ static const cb_part_desc_t k_parts[] = {
  * that failed is NOT marked and is retried on the next call. */
 static uint32_t s_inited;
 
+/* ST1 (item 6): per-part last init results, recorded by cb_bsp_init(). The
+ * attempted bitmask distinguishes "never attempted" from a recorded
+ * ESP_ERR_NOT_FOUND (e.g. an absent IMU). Read/written under s_part_lock.
+ * Not host-testable (R11b): the recording loop runs the real k_parts[] init
+ * functions inside the IDF build — verified by build + the coordinator's
+ * dashboard capture instead. */
+static esp_err_t s_part_results[sizeof(k_parts) / sizeof(k_parts[0])];
+static uint32_t s_part_attempted;
+static portMUX_TYPE s_part_lock = portMUX_INITIALIZER_UNLOCKED;
+
+static void record_part_result(size_t i, esp_err_t err)
+{
+    portENTER_CRITICAL(&s_part_lock);
+    s_part_results[i] = err;
+    s_part_attempted |= k_parts[i].flag;
+    portEXIT_CRITICAL(&s_part_lock);
+}
+
 /* The table must cover every CB_PART_* bit exactly, in enum order. */
 _Static_assert(CB_PART_ALL == 0x1FF, "frozen part mask");
 _Static_assert((CB_PART_BACKLIGHT | CB_PART_RGB | CB_PART_I2C | CB_PART_IMU |
@@ -82,6 +101,40 @@ static const char k_version[] =
 const char *cb_bsp_version(void)
 {
     return k_version;
+}
+
+esp_err_t cb_bsp_part_result(cb_part_t part, esp_err_t *out)
+{
+    size_t i;
+
+    if (out == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    /* Exactly one known CB_PART_* bit: rejects NONE, ALL, multi-bit masks and
+     * unknown bits; the loop below rejects any value that is not a k_parts[]
+     * flag at all. */
+    if ((uint32_t)part == 0 || ((uint32_t)part & ~(uint32_t)CB_PART_ALL) != 0 ||
+        ((uint32_t)part & ((uint32_t)part - 1u)) != 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    for (i = 0; i < sizeof(k_parts) / sizeof(k_parts[0]); ++i) {
+        if (k_parts[i].flag == (uint32_t)part) {
+            bool attempted;
+            esp_err_t result;
+
+            portENTER_CRITICAL(&s_part_lock);
+            attempted = (s_part_attempted & k_parts[i].flag) != 0;
+            result = s_part_results[i];
+            portEXIT_CRITICAL(&s_part_lock);
+
+            if (!attempted) {
+                return ESP_ERR_NOT_FOUND;   /* *out untouched */
+            }
+            *out = result;
+            return ESP_OK;
+        }
+    }
+    return ESP_ERR_INVALID_ARG;   /* unknown part */
 }
 
 esp_err_t cb_bsp_init(uint32_t parts)
@@ -108,6 +161,7 @@ esp_err_t cb_bsp_init(uint32_t parts)
         if (p->init == NULL) {
             /* Requested but not implemented yet (item 1 skeleton). */
             ESP_LOGW(TAG, "%s: not implemented", p->name);
+            record_part_result(i, ESP_ERR_NOT_SUPPORTED);
             if (p->strict && first_strict_err == ESP_OK) {
                 first_strict_err = ESP_ERR_NOT_SUPPORTED;
             }
@@ -115,6 +169,9 @@ esp_err_t cb_bsp_init(uint32_t parts)
         }
 
         err = p->init();
+        /* ST1: record the ACTUAL result — optional failures suppressed from
+         * the return value are still recorded, so the dashboard sees them. */
+        record_part_result(i, err);
         if (err == ESP_OK) {
             s_inited |= p->flag;  /* mark only on success (retry on failure) */
             continue;
