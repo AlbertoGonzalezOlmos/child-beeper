@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -291,38 +292,180 @@ def cmd_monitor(args: argparse.Namespace) -> int:
 
 
 # ------------------------------------------------------------------------- selftest
-def _parse_selftest(lines: list[str]) -> tuple[bool, str]:
+# Frozen selftest serial grammar (ITEM6-BRIEF ST2 / ITEM6-RULINGS "serial contract"):
+#   SELFTEST BEGIN version=1 cb_bsp=<ver>
+#   ITEM:<token> <PASS|FAIL|SKIP> [key=value ...]        (x7, fixed order; PASS/FAIL
+#                                                        lines carry key=value evidence)
+#   ITEM:<token> SKIP reason=<token> [key=value ...]    (reason= mandatory, first field;
+#                                                        legal: needs-human/no-card/absent)
+#   RESULT:<PASS|FAIL> total=7 pass=<p> fail=<f> skip=<s> (exactly one, last contract line)
+# PASS+FAIL+SKIP == total == 7; RESULT:PASS iff fail==0. Button is always
+# SKIP reason=needs-human. Any line containing ITEM:/RESULT: (or a second BEGIN)
+# that fails the grammar is a hard FAIL of the run — no "best effort" accept.
+# Monitor lines may carry ANSI escapes and the `I (123) tag: ` log prefix; both
+# are stripped before matching, and bare (printf-style) lines are accepted too.
+_SELFTEST_ITEMS = ("lifecycle", "lcd", "rgb", "button", "battery", "imu", "sd")
+_SELFTEST_VERSION = "1"
+_SELFTEST_SKIP_REASONS = {"needs-human", "no-card", "absent"}
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_LOG_PREFIX_RE = re.compile(r"^[IWEVD] \([0-9]+\) [^:]{1,24}: ")
+_BEGIN_RE = re.compile(r"^SELFTEST BEGIN version=(?P<v>[0-9]+) cb_bsp=(?P<ver>\S+)$")
+_ITEM_RE = re.compile(r"^ITEM:(?P<tok>[a-z]+) (?P<st>PASS|FAIL|SKIP)(?P<rest>.*)$")
+_RESULT_RE = re.compile(
+    r"^RESULT:(?P<v>PASS|FAIL) total=(?P<t>[0-9]+) pass=(?P<p>[0-9]+) "
+    r"fail=(?P<f>[0-9]+) skip=(?P<s>[0-9]+)$"
+)
+_KV_RE = re.compile(r"^[a-z0-9_]+=[^\s=]+$")
+
+
+def _selftest_payload(line: str) -> str:
+    """Strip ANSI escapes, one optional IDF log prefix, and outer whitespace."""
+    text = _ANSI_RE.sub("", line).strip()
+    text = _LOG_PREFIX_RE.sub("", text, count=1)  # ^-anchored: only a leading prefix
+    return text.strip()
+
+
+def _selftest_target_name(available) -> str | None:
+    """Pick the selftest firmware to flash (ITEM6-RULINGS: 06 first).
+
+    07/08_selftest stay as documented fallbacks so a future rename surfaces as
+    a build error in that project, not as a silent `./cb selftest` breakage.
+    Iterating this preference tuple (never the caller's set) keeps the pick
+    deterministic when several candidates exist.
+    """
+    for name in ("06_dashboard", "07_selftest", "08_selftest"):
+        if name in available:
+            return name
+    return None
+
+
+def _parse_selftest(lines: list[str]) -> tuple[bool, str, int]:
+    """Validate the frozen selftest grammar; returns (ok, detail, skipped).
+
+    ok is True only for a grammar-valid RESULT:PASS. detail names the violated
+    rule on any rejection (ITEM6-RULINGS: no best-effort accept) and lists the
+    failing item tokens on a grammar-valid RESULT:FAIL. skipped counts the SKIP
+    items whenever the grammar validated (0 otherwise).
+    """
+    payload = [_selftest_payload(ln) for ln in lines]
+
+    def contract(line: str) -> bool:
+        return "ITEM:" in line or "RESULT:" in line or line.startswith("SELFTEST BEGIN")
+
+    begin_idx = next((i for i, ln in enumerate(payload) if ln.startswith("SELFTEST BEGIN")), None)
+    if begin_idx is None:
+        seen = sum(1 for ln in payload if contract(ln))
+        return False, f"no SELFTEST BEGIN line within timeout (saw {seen} contract line(s))", 0
+    for ln in payload[:begin_idx]:
+        if contract(ln):
+            return False, f"contract line before SELFTEST BEGIN: '{ln}'", 0
+    m = _BEGIN_RE.match(payload[begin_idx])
+    if m is None:
+        return False, f"malformed SELFTEST BEGIN line: '{payload[begin_idx]}'", 0
+    if m.group("v") != _SELFTEST_VERSION:
+        return False, f"unsupported selftest version={m.group('v')} (expected version=1)", 0
+
     items = 0
+    counts = {"PASS": 0, "FAIL": 0, "SKIP": 0}
+    failing: list[str] = []
     result_line = ""
-    failures = 0
-    for line in lines:
-        stripped = line.strip()
-        if "ITEM:" in stripped:
-            items += 1
-            if "FAIL" in stripped.upper():
-                failures += 1
-        if "RESULT:" in stripped:
-            result_line = stripped
+    for ln in payload[begin_idx + 1 :]:
+        if result_line:
+            # RESULT must be the LAST contract line; live/alive lines after it are fine.
+            if ln.startswith("RESULT:"):
+                return False, f"second RESULT line after the terminal RESULT: '{ln}'", 0
+            if contract(ln):
+                return False, f"contract line after RESULT: '{ln}'", 0
+            continue
+        if "RESULT:" in ln:
+            # Ruled strictness: any line CONTAINING the markers must be grammatical
+            # (a stray marker in noise is a hard FAIL, not something to skip).
+            if not ln.startswith("RESULT:"):
+                return False, f"malformed RESULT line: '{ln}'", 0
+            result_line = ln
+            continue
+        if "ITEM:" not in ln:
+            continue  # boot/driver noise between BEGIN and the items
+        # An ITEM line: grammar-check it and place it in the frozen order.
+        im = _ITEM_RE.match(ln)
+        if im is None:
+            return False, f"malformed ITEM line: '{ln}'", 0
+        tok, status, rest = im.group("tok"), im.group("st"), im.group("rest").strip()
+        fields = rest.split() if rest else []
+        if tok not in _SELFTEST_ITEMS:
+            return False, f"unknown item token '{tok}'", 0
+        if items >= len(_SELFTEST_ITEMS) or tok != _SELFTEST_ITEMS[items]:
+            if items >= len(_SELFTEST_ITEMS):
+                return False, f"expected RESULT after 7 items, saw '{ln}'", 0
+            return False, (
+                f"item out of order: expected '{_SELFTEST_ITEMS[items]}', "
+                f"saw '{tok}'"
+            ), 0
+        if tok == "button" and status != "SKIP":
+            return False, f"button must be SKIP reason=needs-human, saw status {status}", 0
+        if status == "SKIP":
+            if not fields or not fields[0].startswith("reason="):
+                return False, f"SKIP item without reason= as the first field: '{ln}'", 0
+            reason = fields[0][len("reason=") :]
+            if reason not in _SELFTEST_SKIP_REASONS:
+                return False, f"illegal SKIP reason '{reason}'", 0
+            if tok == "button" and reason != "needs-human":
+                return False, "button SKIP reason must be needs-human", 0
+            if (reason == "needs-human" and tok != "button") or (
+                reason == "no-card" and tok != "sd"
+            ):
+                return False, f"illegal SKIP reason '{reason}' for '{tok}'", 0
+        else:
+            if not fields:
+                return False, f"{status} item without key=value evidence: '{ln}'", 0
+        for field in fields[1:] if status == "SKIP" else fields:
+            if not _KV_RE.match(field):
+                return False, f"malformed field '{field}' in: '{ln}'", 0
+        items += 1
+        counts[status] += 1
+        if status == "FAIL":
+            failing.append(tok)
+
     if not result_line:
-        return False, f"no RESULT: line within timeout (saw {items} ITEM line(s))"
-    if items < 1:
-        return False, f"RESULT without any ITEM line: {result_line}"
-    if failures or "FAIL" in result_line.upper() or "PASS" not in result_line.upper():
-        return False, f"{failures} failing item(s); {result_line}"
-    return True, f"{items} item(s); {result_line}"
+        return False, f"no RESULT: line within timeout (saw {items} item(s))", 0
+    if items != len(_SELFTEST_ITEMS):
+        return False, f"expected 7 ITEM lines, saw {items}", 0
+    rm = _RESULT_RE.match(result_line)
+    if rm is None:
+        return False, f"malformed RESULT line: '{result_line}'", 0
+    total, p, f, s = (int(rm.group(k)) for k in ("t", "p", "f", "s"))
+    verdict = rm.group("v")
+    if total != 7:
+        return False, f"total={total}, expected 7", 0
+    if p + f + s != 7:
+        return False, f"arithmetic mismatch: pass+fail+skip={p + f + s}, expected 7", 0
+    if (p, f, s) != (counts["PASS"], counts["FAIL"], counts["SKIP"]):
+        return (
+            False,
+            f"count mismatch: items say PASS={counts['PASS']} FAIL={counts['FAIL']} "
+            f"SKIP={counts['SKIP']}, RESULT says pass={p} fail={f} skip={s}",
+            0,
+        )
+    if verdict == "PASS" and f != 0:
+        return False, f"RESULT:PASS with fail={f} > 0", 0
+    if verdict == "FAIL" and f == 0:
+        return False, "RESULT:FAIL with fail=0 (verdict must follow the items)", 0
+    if verdict == "PASS":
+        return True, result_line, s
+    return False, f"{f} failing item(s): {', '.join(failing)}; {result_line}", s
 
 
 def cmd_selftest(args: argparse.Namespace) -> int:
     ctx = load_ctx()
     port = ports_mod.guard_port(args.port)  # guard BEFORE building/flashing
     available = {t.name for t in targets_mod.discover(ctx)}
-    selftest_apps = [n for n in available if n in ("06_dashboard", "08_selftest", "07_selftest")]
-    if not selftest_apps:
+    name = _selftest_target_name(available)
+    if name is None:
         raise EnvError(
             "no selftest firmware in this tree yet (item 6 lands examples/06_dashboard); "
             "refusing to flash the plain app and wait for a RESULT: line"
         )
-    target = targets_mod.resolve(ctx, [selftest_apps[0]])[0]
+    target = targets_mod.resolve(ctx, [name])[0]
     runner = Runner(ctx)
     outcome = builder.build_target(ctx, runner, target)
     if not outcome.ok:
@@ -351,10 +494,13 @@ def cmd_selftest(args: argparse.Namespace) -> int:
         echo=True,
         stop=lambda line: "RESULT:" in line,
     )
-    ok, detail = _parse_selftest(streamed.lines)
+    ok, detail, skipped = _parse_selftest(streamed.lines)
     if streamed.timed_out and not any("RESULT:" in line for line in streamed.lines):
         detail = f"timed out after {timeout:.0f}s; {detail}"
     _print(("[PASS] " if ok else "[FAIL] ") + "selftest " + detail)
+    if skipped > 0:
+        # ITEM6-RULINGS / R19: SKIP is never verification — say it loudly.
+        _print(f"cb: {skipped} skipped (unverified)")
     return CODE_OK if ok else CODE_FAIL
 
 

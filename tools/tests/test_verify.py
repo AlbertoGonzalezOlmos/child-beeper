@@ -49,7 +49,7 @@ class BuildSimRunner(FakeRunner):
         self.reply("cb.py flash", 2, "", HINT)
         self.reply("cb.py monitor", 2, "", HINT)
         self.reply("make test", 0, "ok - all\n1..1\n")
-        self.reply("-m unittest discover", 0, "", "Ran 115 tests in 0.1s\n\nOK\n")
+        self.reply("-m unittest discover", 0, "", "Ran 152 tests in 0.1s\n\nOK\n")
 
     def run_idf(self, args, *, cwd, timeout=3600.0):  # type: ignore[override]
         result = super().run_idf(args, cwd=cwd)
