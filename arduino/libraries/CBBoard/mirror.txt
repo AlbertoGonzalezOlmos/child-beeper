@@ -1,0 +1,16 @@
+# CBBoard mirror manifest (item 7, AR8) — component-relative paths, one per line.
+# Consumed ONLY by tools/cbchecks/arduino.py (sole parser): staging copies each entry to
+# src/<basename> in the staged library; pin-drift byte-compares staged vs canonical.
+# Frozen set = 12 entries (R25/AR8); deleting one must FAIL, never shrink silently.
+include/cb_pins.h
+include/cb_math.h
+include/cb_button_fsm.h
+include/cb_qmi8658_regs.h
+include/cb_rgb_math.h
+include/cb_battery_math.h
+include/cb_imu_math.h
+src/cb_math.c
+src/cb_button_fsm.c
+src/cb_rgb_math.c
+src/cb_battery_math.c
+src/cb_imu_math.c
