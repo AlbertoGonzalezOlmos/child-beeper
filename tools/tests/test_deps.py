@@ -42,9 +42,16 @@ MANIFEST_OK = """dependencies:
   espressif/led_strip: '3.1.1'
 """
 
-# Item 3/4/5: the tree ships five example projects, each with its owner-committed lock
-# (plan.md R9b / R25; item 5 per ITEM5-BRIEF).
-EXAMPLES = ("01_lcd_hello", "02_rgb_button", "03_battery", "04_imu", "05_sdcard")
+# Item 3/4/5/6: the tree ships six example projects, each with its owner-committed lock
+# (plan.md R9b / R25; items 5/6 per ITEM5-BRIEF / FIX-BRIEF-item6).
+EXAMPLES = (
+    "01_lcd_hello",
+    "02_rgb_button",
+    "03_battery",
+    "04_imu",
+    "05_sdcard",
+    "06_dashboard",
+)
 
 
 def _write(path: Path, text: str) -> None:
@@ -69,7 +76,7 @@ class TestDepsPins(TempRepoTest):
         ok, detail, extra = deps.check_pins(self.ctx)
         self.assertTrue(ok, detail)
         self.assertIn("lvgl/lvgl 9.5.0", detail)
-        self.assertEqual(len(extra["locks"]), 6)  # root lock + five example locks
+        self.assertEqual(len(extra["locks"]), 7)  # root lock + six example locks
 
     def test_wrong_lock_version_fails_naming_file(self) -> None:
         self._install_ok()
@@ -116,6 +123,14 @@ class TestDepsPins(TempRepoTest):
         ok, detail, _ = deps.check_pins(self.ctx)
         self.assertFalse(ok)
         self.assertIn("examples/05_sdcard/dependencies.lock", detail)
+        self.assertIn("./cb deps", detail)
+
+    def test_missing_item6_lock_fails(self) -> None:
+        self._install_ok()
+        (self.root / "examples/06_dashboard/dependencies.lock").unlink()
+        ok, detail, _ = deps.check_pins(self.ctx)
+        self.assertFalse(ok)
+        self.assertIn("examples/06_dashboard/dependencies.lock", detail)
         self.assertIn("./cb deps", detail)
 
     def test_manifest_range_pin_fails(self) -> None:

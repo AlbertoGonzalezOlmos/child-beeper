@@ -203,11 +203,15 @@ class Runner:
         env_extra: dict[str, str] | None = None,
         stop: "Callable[[str], bool] | None" = None,
         use_lock: bool = False,
+        stop_check: "Callable[[], bool] | None" = None,
     ):
         """Run argv, forwarding stdout line by line (live), with a deadline and optional stop.
 
         Writes are flushed immediately, so this is genuinely live even through a pipe.
         stdin is inherited (so idf.py monitor keeps working: Ctrl-] exits it).
+        `stop` is evaluated per line; `stop_check` is additionally evaluated on every
+        loop wake (~4 Hz, including line-free polls) so a caller can end the stream on
+        a time condition (e.g. `./cb selftest`'s post-RESULT drain window).
         """
         argv = list(argv)
         env = dict(os.environ)
@@ -248,6 +252,8 @@ class Runner:
                     remaining = timeout - (_now_ms() - started) / 1000.0
                     if remaining <= 0:
                         timed_out = True
+                        break
+                    if stop_check is not None and stop_check():
                         break
                     try:
                         line = q.get(timeout=min(0.25, remaining))

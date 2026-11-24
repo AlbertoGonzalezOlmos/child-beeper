@@ -19,6 +19,7 @@ import os
 import re
 import shutil
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -292,21 +293,22 @@ def cmd_monitor(args: argparse.Namespace) -> int:
 
 
 # ------------------------------------------------------------------------- selftest
-# Frozen selftest serial grammar (ITEM6-BRIEF ST2 / ITEM6-RULINGS "serial contract"):
-#   SELFTEST BEGIN version=1 cb_bsp=<ver>
-#   ITEM:<token> <PASS|FAIL|SKIP> [key=value ...]        (x7, fixed order; PASS/FAIL
-#                                                        lines carry key=value evidence)
-#   ITEM:<token> SKIP reason=<token> [key=value ...]    (reason= mandatory, first field;
-#                                                        legal: needs-human/no-card/absent)
+# Frozen selftest serial grammar (ITEM6-BRIEF ST2 / ITEM6-RULINGS gold table,
+# tightened by FIX-BRIEF-item6 round 2):
+#   SELFTEST BEGIN version=1 cb_bsp=<ver>               (exactly one, first)
+#   ITEM:<token> <PASS|FAIL|SKIP> [key=value ...]        (x7, frozen order; PASS lines
+#                                                          carry the required evidence)
+#   ITEM:button SKIP reason=needs-human poller=running   (the exact frozen line)
+#   ITEM:sd SKIP reason=<no-card|absent>                 (sd is the only other SKIP;
+#                                                          absent hardware elsewhere is a FAIL)
 #   RESULT:<PASS|FAIL> total=7 pass=<p> fail=<f> skip=<s> (exactly one, last contract line)
-# PASS+FAIL+SKIP == total == 7; RESULT:PASS iff fail==0. Button is always
-# SKIP reason=needs-human. Any line containing ITEM:/RESULT: (or a second BEGIN)
-# that fails the grammar is a hard FAIL of the run — no "best effort" accept.
-# Monitor lines may carry ANSI escapes and the `I (123) tag: ` log prefix; both
-# are stripped before matching, and bare (printf-style) lines are accepted too.
+# pass+fail+skip == total == 7; RESULT:PASS iff fail==0, RESULT:FAIL iff fail>=1.
+# Any line containing ITEM:/RESULT: — or a second BEGIN anywhere — that fails
+# the grammar is a hard FAIL of the run; no "best effort" accept. Monitor
+# lines may carry ANSI escapes and the `I (123) tag: ` log prefix; both are
+# stripped before matching, and bare (printf-style) lines are accepted too.
 _SELFTEST_ITEMS = ("lifecycle", "lcd", "rgb", "button", "battery", "imu", "sd")
 _SELFTEST_VERSION = "1"
-_SELFTEST_SKIP_REASONS = {"needs-human", "no-card", "absent"}
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 _LOG_PREFIX_RE = re.compile(r"^[IWEVD] \([0-9]+\) [^:]{1,24}: ")
 _BEGIN_RE = re.compile(r"^SELFTEST BEGIN version=(?P<v>[0-9]+) cb_bsp=(?P<ver>\S+)$")
@@ -316,6 +318,20 @@ _RESULT_RE = re.compile(
     r"fail=(?P<f>[0-9]+) skip=(?P<s>[0-9]+)$"
 )
 _KV_RE = re.compile(r"^[a-z0-9_]+=[^\s=]+$")
+
+# FIX-BRIEF-item6 (round 2): the exact evidence a PASS line must carry per item
+# (None = key must be present with any value; a tuple = allowed values).
+_PASS_EVIDENCE = {
+    "lifecycle": {"init": ("ESP_OK",)},
+    "lcd": {"lvgl": None, "frames": ("1",)},
+    "rgb": {"cap_percent": ("20",)},
+    "battery": {"battery_mv": None, "plausible": ("1",), "calibrated": ("1",)},
+    "imu": {"addr": ("0x6A", "0x6B"), "who": ("0x05",), "mag_g": None},
+    "sd": {},
+    "button": {},
+}
+_BUTTON_LINE_FIELDS = ["poller=running"]   # after "reason=needs-human": the exact frozen line
+_SELFTEST_DRAIN_S = 2.0   # FIX-BRIEF round 2: post-RESULT trailing-garbage window
 
 
 def _selftest_payload(line: str) -> str:
@@ -385,6 +401,8 @@ def _parse_selftest(lines: list[str]) -> tuple[bool, str, int]:
             result_line = ln
             continue
         if "ITEM:" not in ln:
+            if ln.startswith("SELFTEST BEGIN"):
+                return False, "second SELFTEST BEGIN line", 0
             continue  # boot/driver noise between BEGIN and the items
         # An ITEM line: grammar-check it and place it in the frozen order.
         im = _ITEM_RE.match(ln)
@@ -403,24 +421,47 @@ def _parse_selftest(lines: list[str]) -> tuple[bool, str, int]:
             ), 0
         if tok == "button" and status != "SKIP":
             return False, f"button must be SKIP reason=needs-human, saw status {status}", 0
+        # Fields: k=v pairs (duplicate keys are malformed); SKIP leads with reason=.
+        kv: dict[str, str] = {}
+        for field in fields:
+            if not _KV_RE.match(field):
+                return False, f"malformed field '{field}' in: '{ln}'", 0
+            key, _, val = field.partition("=")
+            if key in kv:
+                return False, f"duplicate key '{key}' in: '{ln}'", 0
+            kv[key] = val
         if status == "SKIP":
             if not fields or not fields[0].startswith("reason="):
                 return False, f"SKIP item without reason= as the first field: '{ln}'", 0
-            reason = fields[0][len("reason=") :]
-            if reason not in _SELFTEST_SKIP_REASONS:
-                return False, f"illegal SKIP reason '{reason}'", 0
-            if tok == "button" and reason != "needs-human":
-                return False, "button SKIP reason must be needs-human", 0
-            if (reason == "needs-human" and tok != "button") or (
-                reason == "no-card" and tok != "sd"
-            ):
-                return False, f"illegal SKIP reason '{reason}' for '{tok}'", 0
+            reason = kv["reason"]
+            if tok == "button":
+                if reason != "needs-human":
+                    return False, "button SKIP reason must be needs-human", 0
+                if fields[1:] != _BUTTON_LINE_FIELDS:
+                    return False, (
+                        "button line must be exactly 'SKIP reason=needs-human "
+                        "poller=running'"
+                    ), 0
+            elif tok == "sd":
+                if reason not in ("no-card", "absent"):
+                    return False, f"illegal SKIP reason '{reason}' for 'sd'", 0
+            else:
+                # FIX-BRIEF round 2: absent hardware on lifecycle/lcd/rgb/battery/imu
+                # is a FAIL, never a SKIP.
+                return False, f"SKIP is not legitimate for '{tok}' (absence is a FAIL)", 0
         else:
             if not fields:
                 return False, f"{status} item without key=value evidence: '{ln}'", 0
-        for field in fields[1:] if status == "SKIP" else fields:
-            if not _KV_RE.match(field):
-                return False, f"malformed field '{field}' in: '{ln}'", 0
+            if status == "PASS":
+                required = _PASS_EVIDENCE.get(tok, {})
+                for key, allowed in required.items():
+                    if key not in kv:
+                        return False, f"{tok} PASS missing required evidence key '{key}'", 0
+                    if allowed is not None and kv[key] not in allowed:
+                        want = "|".join(allowed)
+                        return False, (
+                            f"{tok} PASS has {key}={kv[key]}, expected {want}"
+                        ), 0
         items += 1
         counts[status] += 1
         if status == "FAIL":
@@ -479,6 +520,30 @@ def cmd_selftest(args: argparse.Namespace) -> int:
         _print(flash.tail(20), err=True)
         return CODE_FAIL
     timeout = float(os.environ.get("CB_SELFTEST_TIMEOUT", "90"))
+    # FIX-BRIEF-item6 (round 2): do not stop AT the first RESULT — keep listening
+    # for a ~2 s drain window so trailing contract garbage (a second RESULT, a
+    # stray ITEM:, a second BEGIN) is actually captured and rejected by the
+    # parser. Line-level `stop` fires immediately on any contract marker AFTER
+    # the terminal RESULT; `stop_check` ends the stream once the drain expires
+    # (evaluated ~4 Hz even with no traffic, so a silent firmware cannot hold
+    # the run open past the drain).
+    result_at: list[float | None] = [None]
+
+    def _saw_result(line: str) -> bool:
+        if result_at[0] is None:
+            if "RESULT:" in line:
+                result_at[0] = time.monotonic()
+            return False
+        payload = _selftest_payload(line)
+        return "ITEM:" in payload or "RESULT:" in payload or payload.startswith(
+            "SELFTEST BEGIN"
+        )
+
+    def _drain_expired() -> bool:
+        return result_at[0] is not None and (
+            time.monotonic() - result_at[0] >= _SELFTEST_DRAIN_S
+        )
+
     streamed = runner.stream(
         runner.idf_argv(
             [
@@ -492,7 +557,8 @@ def cmd_selftest(args: argparse.Namespace) -> int:
         cwd=ctx.root,
         timeout=timeout,
         echo=True,
-        stop=lambda line: "RESULT:" in line,
+        stop=_saw_result,
+        stop_check=_drain_expired,
     )
     ok, detail, skipped = _parse_selftest(streamed.lines)
     if streamed.timed_out and not any("RESULT:" in line for line in streamed.lines):

@@ -84,14 +84,12 @@ class TestParseHappy(unittest.TestCase):
         self.assertIn("RESULT:FAIL total=7 pass=4 fail=1 skip=2", detail)
         self.assertEqual(skipped, 2)
 
-    def test_absent_skip_reason_is_legal(self) -> None:
-        lines = _replace(GOLD, "ITEM:imu PASS addr=0x6B who=0x05 mag_g=0.99",
-                         "ITEM:imu SKIP reason=absent")
-        lines = _replace(lines, "RESULT:PASS total=7 pass=5 fail=0 skip=2",
-                         "RESULT:PASS total=7 pass=4 fail=0 skip=3")
+    def test_sd_absent_skip_reason_is_legal(self) -> None:
+        # Round 2: `absent` is legal on sd only; a SKIP anywhere else is a FAIL.
+        lines = _replace(GOLD, "ITEM:sd SKIP reason=no-card", "ITEM:sd SKIP reason=absent")
         ok, detail, skipped = self._parse(lines)
         self.assertTrue(ok, detail)
-        self.assertEqual(skipped, 3)
+        self.assertEqual(skipped, 2)
 
     def test_lines_after_result_without_markers_are_ignored(self) -> None:
         lines = GOLD + [
@@ -146,7 +144,7 @@ class TestParseMalformed(unittest.TestCase):
         self._reject(
             _replace(GOLD, "ITEM:rgb PASS cap_percent=20",
                      "ITEM:rgb SKIP PASS reason=absent"),
-            "SKIP item without reason= as the first field",
+            "malformed field 'PASS'",
         )
 
     def test_arithmetic_mismatch_rejected(self) -> None:
@@ -236,11 +234,13 @@ class TestParseMalformed(unittest.TestCase):
             "illegal SKIP reason 'bogus'",
         )
 
-    def test_skip_reason_wrong_token_pairing_rejected(self) -> None:
+    def test_skip_on_non_sd_item_rejected(self) -> None:
+        # Round 2: absence of lifecycle/lcd/rgb/battery/imu hardware is a FAIL,
+        # never a SKIP — even with a would-be-legal reason token.
         self._reject(
             _replace(GOLD, "ITEM:imu PASS addr=0x6B who=0x05 mag_g=0.99",
-                     "ITEM:imu SKIP reason=no-card"),
-            "illegal SKIP reason 'no-card' for 'imu'",
+                     "ITEM:imu SKIP reason=absent"),
+            "SKIP is not legitimate for 'imu'",
         )
 
     def test_total_not_seven_rejected(self) -> None:
@@ -286,6 +286,97 @@ class TestParseMalformed(unittest.TestCase):
         # hard FAIL — a stray marker in noise must not be silently skipped.
         lines = GOLD[:7] + ["driver note mentions RESULT: oddly"] + GOLD[7:]
         self._reject(lines, "malformed RESULT line")
+
+    # ---- round 2 (FIX-BRIEF-item6): one case per new strictness bullet ----
+
+    def test_second_begin_rejected(self) -> None:
+        lines = GOLD[:5] + ["SELFTEST BEGIN version=1 cb_bsp=0.5.0"] + GOLD[5:]
+        self._reject(lines, "second SELFTEST BEGIN line")
+
+    def test_button_skip_without_poller_running_rejected(self) -> None:
+        self._reject(
+            _replace(GOLD, "ITEM:button SKIP reason=needs-human poller=running",
+                     "ITEM:button SKIP reason=needs-human"),
+            "button line must be exactly 'SKIP reason=needs-human poller=running'",
+        )
+
+    def test_button_skip_wrong_poller_field_rejected(self) -> None:
+        self._reject(
+            _replace(GOLD, "ITEM:button SKIP reason=needs-human poller=running",
+                     "ITEM:button SKIP reason=needs-human poller=stopped"),
+            "button line must be exactly 'SKIP reason=needs-human poller=running'",
+        )
+
+    def test_button_skip_extra_field_rejected(self) -> None:
+        self._reject(
+            _replace(GOLD, "ITEM:button SKIP reason=needs-human poller=running",
+                     "ITEM:button SKIP reason=needs-human poller=running extra=1"),
+            "button line must be exactly 'SKIP reason=needs-human poller=running'",
+        )
+
+    def test_lifecycle_pass_missing_init_rejected(self) -> None:
+        self._reject(
+            _replace(GOLD, "ITEM:lifecycle PASS init=ESP_OK",
+                     "ITEM:lifecycle PASS err=ESP_OK"),
+            "lifecycle PASS missing required evidence key 'init'",
+        )
+
+    def test_lcd_pass_frames_zero_rejected(self) -> None:
+        self._reject(
+            _replace(GOLD, "ITEM:lcd PASS lvgl=9.5.0 frames=1",
+                     "ITEM:lcd PASS lvgl=9.5.0 frames=0"),
+            "lcd PASS has frames=0, expected 1",
+        )
+
+    def test_rgb_pass_wrong_cap_rejected(self) -> None:
+        self._reject(
+            _replace(GOLD, "ITEM:rgb PASS cap_percent=20",
+                     "ITEM:rgb PASS cap_percent=100"),
+            "rgb PASS has cap_percent=100, expected 20",
+        )
+
+    def test_battery_pass_calibrated_zero_rejected(self) -> None:
+        # Round 2: a degraded (uncalibrated) reading is not a pass.
+        self._reject(
+            _replace(GOLD, "ITEM:battery PASS battery_mv=4221 pin_mv=1397 calibrated=1 plausible=1",
+                     "ITEM:battery PASS battery_mv=4221 pin_mv=1397 calibrated=0 plausible=1"),
+            "battery PASS has calibrated=0, expected 1",
+        )
+
+    def test_battery_pass_plausible_zero_rejected(self) -> None:
+        self._reject(
+            _replace(GOLD, "ITEM:battery PASS battery_mv=4221 pin_mv=1397 calibrated=1 plausible=1",
+                     "ITEM:battery PASS battery_mv=4221 pin_mv=1397 calibrated=1 plausible=0"),
+            "battery PASS has plausible=0, expected 1",
+        )
+
+    def test_imu_pass_wrong_who_rejected(self) -> None:
+        self._reject(
+            _replace(GOLD, "ITEM:imu PASS addr=0x6B who=0x05 mag_g=0.99",
+                     "ITEM:imu PASS addr=0x6B who=0x00 mag_g=0.99"),
+            "imu PASS has who=0x00, expected 0x05",
+        )
+
+    def test_imu_pass_wrong_addr_rejected(self) -> None:
+        self._reject(
+            _replace(GOLD, "ITEM:imu PASS addr=0x6B who=0x05 mag_g=0.99",
+                     "ITEM:imu PASS addr=0x6C who=0x05 mag_g=0.99"),
+            "imu PASS has addr=0x6C, expected 0x6A|0x6B",
+        )
+
+    def test_imu_pass_missing_mag_g_rejected(self) -> None:
+        self._reject(
+            _replace(GOLD, "ITEM:imu PASS addr=0x6B who=0x05 mag_g=0.99",
+                     "ITEM:imu PASS addr=0x6B who=0x05"),
+            "imu PASS missing required evidence key 'mag_g'",
+        )
+
+    def test_duplicate_field_key_rejected(self) -> None:
+        self._reject(
+            _replace(GOLD, "ITEM:battery PASS battery_mv=4221 pin_mv=1397 calibrated=1 plausible=1",
+                     "ITEM:battery PASS battery_mv=4221 battery_mv=4221 calibrated=1 plausible=1"),
+            "duplicate key 'battery_mv'",
+        )
 
 
 class TestTargetChoice(unittest.TestCase):

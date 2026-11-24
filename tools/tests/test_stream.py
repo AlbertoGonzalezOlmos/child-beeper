@@ -68,6 +68,51 @@ class TestStream(TempRepoTest):
         self.assertEqual(result.lines[-1], "RESULT:PASS")
         self.assertNotIn("should-not-be-seen", result.lines)
 
+    def test_stop_check_ends_stream_after_deadline(self) -> None:
+        """The `./cb selftest` post-RESULT drain: stop_check (evaluated on every
+        loop wake, line-free included) ends the stream once the deadline passes,
+        without waiting for further output and without a timeout flag."""
+        started = time.monotonic()
+        result_at: list[float | None] = [None]
+
+        def stop(line: str) -> bool:
+            if result_at[0] is None and "RESULT:" in line:
+                result_at[0] = time.monotonic()
+                return False
+            return result_at[0] is not None and "ITEM:" in line
+
+        def drain_expired() -> bool:
+            return result_at[0] is not None and (time.monotonic() - result_at[0]) >= 0.4
+
+        # Mark, then go silent for a long time: only stop_check can end us.
+        result = self._run(
+            "echo RESULT:PASS; sleep 30", timeout=10.0, stop=stop, stop_check=drain_expired
+        )
+        elapsed = time.monotonic() - started
+        self.assertFalse(result.timed_out)
+        self.assertEqual(result.lines[-1], "RESULT:PASS")
+        self.assertLess(elapsed, 5.0, "stop_check must end the stream well before the deadline")
+
+    def test_stop_check_immediately_on_post_result_contract_line(self) -> None:
+        """Trailing contract garbage after the terminal RESULT stops the stream
+        at once (the line is captured for the parser to reject)."""
+        result_at: list[float | None] = [None]
+
+        def stop(line: str) -> bool:
+            if result_at[0] is None and "RESULT:" in line:
+                result_at[0] = time.monotonic()
+                return False
+            return result_at[0] is not None and "ITEM:" in line
+
+        result = self._run(
+            "echo RESULT:PASS; echo ITEM:evil PASS x=1; sleep 30",
+            timeout=10.0,
+            stop=stop,
+            stop_check=lambda: False,
+        )
+        self.assertFalse(result.timed_out)
+        self.assertIn("ITEM:evil PASS x=1", result.lines)
+
     def test_exit_code_is_reported(self) -> None:
         result = self._run("echo bye; exit 7", timeout=5.0)
         self.assertEqual(result.code, 7)
