@@ -17,3 +17,12 @@ choice CB_IMU_ODR
     config CB_IMU_ODR_1000
         bool "1000 Hz"
 endchoice
+
+# Item 5 (SD, ITEM5-BRIEF SD2): exactly one knob — the SDMMC maximum bus
+# frequency, default 20 MHz. The 1-bit fallback is automatic and logged;
+# there is no force-1-bit knob and no frequency macro in cb_pins.h.
+
+config CB_SD_MAX_FREQ_KHZ
+    int "SDMMC maximum clock frequency (kHz)"
+    range 400 40000
+    default 20000

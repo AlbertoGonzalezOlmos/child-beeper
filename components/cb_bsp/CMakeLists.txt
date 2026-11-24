@@ -26,6 +26,7 @@ idf_component_register(
         "src/cb_imu_math.c"
         "src/cb_i2c.c"
         "src/cb_imu.c"
+        "src/cb_sd.c"
         "src/cb_rgb.c"
         "src/cb_button.c"
         "src/cb_battery.c"
@@ -40,4 +41,7 @@ idf_component_register(
         esp_driver_gpio
         esp_timer
         esp_adc
+        esp_driver_sdmmc
+        fatfs
+        vfs
 )
