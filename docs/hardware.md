@@ -228,8 +228,9 @@ The hardware meaning is deliberately narrow:
 - A plausible battery sample is not a multimeter measurement or proof that a cell is fitted. The
   golden `battery_mv=4221 pin_mv=1397 calibrated=1 plausible=1` values are one realistic snapshot,
   not acceptance constants.
-- `addr=0x6B who=0x05 mag_g=0.99` is identity plus a resting reading. Deliberate motion, axis
-  orientation, accuracy/bias calibration and I2C signal integrity remain separate hardware checks.
+- `addr=0x6B who=0x05 mag_g=0.99` is identity plus a resting reading inside the example's
+  **0.50–1.50 g** sanity window, not an accuracy threshold. Deliberate motion, axis orientation,
+  accuracy/bias calibration and I2C signal integrity remain separate hardware checks.
 - SD PASS requires a mounted card; the golden no-card line is a SKIP and stays unverified. With no
   CD/WP pins, `reason=no-card` cannot by itself establish physical slot emptiness or mounted I/O.
 

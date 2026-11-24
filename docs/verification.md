@@ -77,10 +77,12 @@ Rule (also in `AGENTS.md`): *never claim hardware-verified without a board.*
   remain **PENDING**; exact lines are in checklist 9 below.
 - **Item-6 docs-lane checks (2026-11-24; supplementary, not the full gate)**: with
   `CB_BUILD_ROOT=build/kimi-k31-pro`, `./cb test` passed all **47** host tests (`# failed 0`),
-  `python3 -m unittest discover -s tools/tests -t . -q` passed **152** tests, `./cb verify --fast`
-  completed **7 pass, 0 fail, 9 skip**, and `./cb build app` passed with the 0.5.0 BSP header. The
-  fast run preceded `06_dashboard`, so its dashboard build, full coordinator gate and all hardware
-  checks remain PENDING.
+  `python3 -m unittest discover -s tools/tests -t . -q` passed **152** tests, and
+  `./cb build app 06_dashboard` passed both targets with the 0.5.0 BSP header (`06_dashboard.bin`
+  **685168 bytes**). With the dashboard and all seven locks present, `./cb verify --fast` completed
+  **7 pass, 0 fail, 10 skip**, including `deps-pins` on seven locks and the expected
+  `build:06_dashboard` SKIP in fast mode. The full coordinator gate and all hardware checks remain
+  PENDING.
 - **Item-3 round-1 agent-side checks (2026-11-23; supplementary, not the full gate)**: with
   `CB_BUILD_ROOT=build/kimi-k31-pro`, `./cb test` passed all **39** host tests (`# failed 0`),
   `./cb verify --fast` completed **7 pass, 0 fail, 7 skip** (109 CLI tests), and
@@ -168,14 +170,15 @@ Steps run in a **fixed order** with **stable ids**; each prints `[PASS]/[FAIL]/[
    **esp_lvgl_port 2.9.0**, **led_strip 3.1.1**, **idf 6.1.0**, and
    `components/cb_bsp/idf_component.yml` must pin those three exactly (no `^`/`~`/`>=` ranges).
    A missing/stale lock FAILs with a `./cb deps` hint — run `./cb deps` once after any
-   manifest/lock change (ruling A9). Item 5 has six project locks: root, `01_lcd_hello`,
-   `02_rgb_button`, `03_battery`, `04_imu`, and `05_sdcard`. Each example lock is committed by the
-   example owner after its first successful build; dependency versions themselves do not change.
+   manifest/lock change (ruling A9). Item 5 had six project locks; item 6 adds `06_dashboard`,
+   making **seven** (root plus six examples). Each example lock is committed by the example owner
+   after its first successful build; dependency versions themselves do not change.
 7. `build:app` — builds the root app (`main/` "hello beeper").
 8. `build:<example>` — one step per `examples/*`. Item 3 adds required steps
    `build:02_rgb_button` and `build:03_battery` after `build:01_lcd_hello`; item 4 adds
    `build:04_imu`, and item 5 adds required `build:05_sdcard` with the same missing-target FAIL
-   semantics in full and fast modes.
+   semantics in full and fast modes. Item 6's discovered `build:06_dashboard` step follows them;
+   its targeted build and the fast-gate discovery/lock checks are recorded below.
 9. `sdkconfig-assert` — per built target: OCT PSRAM, PSRAM 80 M, 16 MB flash, USB-Serial/JTAG
    console, custom partition table; plus the built partition binary exists and the table contains
    `factory,app,factory,0x10000,3M` and `storage,data,fat,0x310000,0x800000`.
@@ -185,7 +188,7 @@ Steps run in a **fixed order** with **stable ids**; each prints `[PASS]/[FAIL]/[
    `CONFIG_LV_FONT_DEFAULT_MONTSERRAT_14=y`, `CONFIG_LV_FONT_MONTSERRAT_14=y`,
    `CONFIG_LV_USE_LABEL=y`, `CONFIG_LV_USE_IMAGE=y`; and **forbids** `CONFIG_LV_CONF_MINIMAL=y`.
    Absence of any `CONFIG_LV_` config in those two targets is a **FAIL, not a skip**. For every
-   other target, including 02/03/04/05, the same eight keys are checked **whenever any `CONFIG_LV_*`
+   other target, including 02/03/04/05/06, the same eight keys are checked **whenever any `CONFIG_LV_*`
    entry is present**; cb_bsp's manifest normally makes them present even though those examples
    do not call LVGL. (`CONFIG_LV_OS_NONE=y` is deliberate: esp_lvgl_port owns the LVGL task;
    demanding an `LV_OS_FREERTOS`-style setting would fail a correct build.)

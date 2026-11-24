@@ -726,7 +726,8 @@ evidence remain PENDING unless the coordinator captures them.
 
 `examples/06_dashboard` initializes `CB_PART_ALL`, gathers the per-part evidence, renders its first
 frame, and emits the following **gold-standard no-card/no-finger report**. These payloads and their
-field order are byte-exact; normal ESP_LOG output may prepend `I (…) dashboard: `:
+field order are byte-exact. The example prints the contract bare with `printf`; the parser also
+accepts the same complete payloads behind a standard ESP_LOG prefix and optional ANSI color codes:
 
 ```text
 SELFTEST BEGIN version=1 cb_bsp=0.5.0
@@ -765,9 +766,9 @@ The grammar rules are part of the API contract, not suggestions for a best-effor
 | `lifecycle` | Return from `cb_bsp_init(CB_PART_ALL)` (`init=ESP_OK` in the golden run); optional failures are still checked separately | Optional-part health from this line alone |
 | `lcd` | LVGL 9.5.0 is up and the example observed its own first frame flushed (`frames=1`) | Pixel correctness, colours, geometry, legibility or tearing |
 | `rgb` | RGB driver init succeeded; `cap_percent=20` is the frozen numeric cap | Visible colour, brightness or brownout behaviour |
-| `button` | Poller is running, but unattended operation always SKIPped with `needs-human` | PRESS/RELEASE/CLICK/DOUBLE_CLICK/LONG_PRESS gestures |
+| `button` | The frozen unattended line carries `poller=running` but always SKIPs `needs-human`; it is not a new gesture/poller measurement | PRESS/RELEASE/CLICK/DOUBLE_CLICK/LONG_PRESS gestures |
 | `battery` | One plausible calibrated sample; the golden fields are one snapshot, not constants | Multimeter accuracy, charge percentage or physical cell presence |
-| `imu` | Answering address, WHO_AM_I 0x05 and a plausible resting magnitude (`mag_g`, in g) | Motion response, axis orientation, full-scale accuracy or bias calibration |
+| `imu` | Answering address, WHO_AM_I 0x05 and a resting magnitude (`mag_g`, in g) inside the example's 0.50–1.50 g sanity window | Motion response, axis orientation, full-scale accuracy or bias calibration |
 | `sd` | Mounted state is PASS when a usable card is mounted; this bench's golden report SKIPs `no-card` | Mounted I/O, negotiated fallback, hot removal, or physical slot emptiness from a mount error |
 
 `cb_bsp_part_result()` supplies last-init truth where needed; the active evidence comes from the
