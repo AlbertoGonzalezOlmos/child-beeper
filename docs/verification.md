@@ -1,11 +1,13 @@
 # Verification — what is proven, how, and what still needs the board
 
-> Status (updated for item 5): item-4 full gate is **13 pass, 0 fail, 2 skip**, with item-2/3/4
+> Status (updated for item 6): item-4 full gate is **13 pass, 0 fail, 2 skip**, with item-2/3/4
 > serial checks **hardware-verified** as detailed below. Item-5's full gate is **14 pass, 0 fail,
-> 2 skip** and its no-card degraded path is **hardware-verified 2026-11-23**. Root 0.4.0 and all
-> mounted SD operations remain **PENDING**. Display/LED visuals, button gestures, multimeter
-> accuracy, IMU motion/accuracy/bias calibration and mounted SD I/O remain PENDING (needs human/card).
-> Details and dates follow.
+> 2 skip** and its no-card degraded path is **hardware-verified 2026-11-23**. Item-6's exact
+> self-test/dashboard contract is frozen, but its full gate, root 0.5.0 regression and all physical
+> dashboard/self-test evidence are **PENDING**. Earlier root-version and mounted SD captures retain
+> their historical status. Display/LED visuals, button gestures, multimeter accuracy, IMU
+> motion/accuracy/bias calibration and mounted SD I/O remain PENDING (needs human/card). Details
+> and measured dates follow; no item-6 example below is itself hardware evidence.
 
 This repo distinguishes two levels of proof, and every doc/report must say which one applies:
 
@@ -142,6 +144,10 @@ Steps run in a **fixed order** with **stable ids**; each prints `[PASS]/[FAIL]/[
    forbidden (SD9/R11b). No pure helper is introduced. The existing **47** tests, including all six
    SD pin values and GPIO uniqueness, remain the host regression suite; mount, fallback, VFS info,
    unmount and file IO require source review plus real-card evidence, not mocked host success.
+   Item 6 likewise adds **no new pure C helper or host test**: `cb_bsp_part_result()` records from
+   the real IDF-only `k_parts[]` init loop, which cannot be exercised without forbidden IDF stubs.
+   Its build/source review and the coordinator dashboard capture are the evidence; the existing 47
+   pure-C tests remain the host regression suite. The versioned self-test parser is Python instead.
 3. `cli-tests` — the CLI's own unit tests:
    `python3 -m unittest discover -s tools/tests -t . -q` (a missing `tools/tests/` is a FAIL,
    owner deepseek-flash). Item 4's suite had **112 tests**. Item 5 adds one missing-lock test and
@@ -432,8 +438,66 @@ Procedure per line: run the command, compare with "expected", tick and fill in d
         destructive card test.
       - [ ] **Remaining hardware checks — PENDING (needs card/human)**: sustained IO, hot removal,
         internal-pull-up signal integrity, collision/error paths and user-data preservation.
-- [ ] 10. (item 6+) `./cb selftest` → `SELFTEST`/`ITEM:`/`RESULT:` lines, `RESULT` all PASS
-      (serial contract frozen in item 6).
+- [ ] 10. (item 6) **Seven-part self-test + LVGL dashboard — contract frozen; every check below
+      is PENDING until the coordinator supplies dated results.** The gold-standard bench report is
+      the following no-card/no-finger sequence. Its arithmetic is five PASS, zero FAIL, two SKIP;
+      both SKIPs remain unverified even though the overall command exits 0.
+
+      ```text
+      SELFTEST BEGIN version=1 cb_bsp=0.5.0
+      ITEM:lifecycle PASS init=ESP_OK
+      ITEM:lcd PASS lvgl=9.5.0 frames=1
+      ITEM:rgb PASS cap_percent=20
+      ITEM:button SKIP reason=needs-human poller=running
+      ITEM:battery PASS battery_mv=4221 pin_mv=1397 calibrated=1 plausible=1
+      ITEM:imu PASS addr=0x6B who=0x05 mag_g=0.99
+      ITEM:sd SKIP reason=no-card
+      RESULT:PASS total=7 pass=5 fail=0 skip=2
+      ```
+
+      - [ ] **Full gate + parser suite — PENDING**: coordinator runs
+        `CB_BUILD_ROOT=build/coordinator ./cb verify`. Record actual totals and the new
+        `build:06_dashboard` / sdkconfig target results, not estimates. The Python suite uses static
+        logs only: this golden PASS, a valid one-item RESULT:FAIL, and one case each for bad
+        version, six items, eight items, out-of-order/unknown tokens, missing SKIP reason, SKIP
+        with PASS text, arithmetic/count mismatch, RESULT not last, and second RESULT. Every
+        malformed `ITEM:`/`RESULT:` line is a hard exit-1 failure. The BSP's result recording stays
+        IDF lifecycle code, with no separately pure helper to host-test; no IDF stubs or mocked
+        peripheral PASS are allowed. Item 6 therefore keeps the existing 47 pure-C host tests and
+        puts the new grammar vectors in `tools/tests/test_selftest.py`.
+      - [ ] **Golden serial + process result — PENDING**: with the board resting, no finger on BOOT,
+        and the physical card state recorded by the coordinator, run
+        `CB_BUILD_ROOT=build/coordinator ./cb selftest --port /dev/ttyACM0`. Capture BEGIN, all
+        seven ITEMs in order, one terminal RESULT, the actual exit status, and loud
+        `2 skipped (unverified)` for the golden no-card PASS. `RESULT:PASS` requires `fail=0`;
+        RESULT:FAIL and every grammar/timeout failure exit 1. No port exits 2 before build/flash.
+        Target preference is 06_dashboard → 07_selftest → 08_selftest; no new CLI flags exist.
+      - [ ] **Live/alive soak — PENDING**: RESULT ends the contract, not serial output. In a separate
+        monitor capture of at least 15 s after the self-test, require the combined live line every
+        ~2 s and `dashboard: alive #N` every ~5 s with accumulating cadence and no WDT/reset. A
+        valid example using the same snapshot is
+        `live bat=4221mV plausible=1 imu_mag=0.99g addr=0x6B`; unavailable fields are exactly
+        `bat=NAmV`, `imu_mag=NAg`, and/or `addr=0x00`, never stale data. Record timestamps and
+        actual numbers rather than treating this example as evidence.
+      - [ ] **Dashboard visual check (human) — PENDING**: confirm the `cb_bsp=0.5.0` title, all
+        seven legible status rows in order, live battery mV/plausible and IMU magnitude/address
+        rows, and a changing alive tick. Check clipping, colours, geometry and tearing. Serial
+        `frames=1` proves the example's first LVGL flush only; it cannot tick any visual box.
+      - [ ] **Mounted-card variant — PENDING (needs a known usable card)**: if available, repeat
+        self-test with the card state known and record the actual SD evidence/width and recomputed
+        RESULT. Mounted state is the only item-6 SD claim; capacity, file round-trips, successful
+        1-bit fallback, unmount, hot removal and user-data preservation remain checklist-9 work.
+        The golden `reason=no-card` is an unverified no-card/mount state, not proof of physical slot
+        emptiness because the board has no card-detect pin.
+      - [ ] **Root 0.5.0 regression — PENDING**: flash `app` separately and capture
+        `cb_bsp=0.5.0 init(CB_PART_ALL)=ESP_OK` plus continuing `hello_beeper: alive #N`. This
+        proves the new build stamp/strict lifecycle only, not optional-part health.
+      - [ ] **Human/electrical limits — remain PENDING unless separately observed**: RGB visible
+        colour/brightness, BOOT PRESS/RELEASE/CLICK/DOUBLE_CLICK/LONG_PRESS gestures, battery
+        multimeter accuracy and physical cell presence, IMU motion/axis/full-scale accuracy/bias
+        calibration and signal integrity, and every uninjected driver failure path. Button is
+        always `SKIP reason=needs-human poller=running`; a press window never makes it PASS. No
+        Wi-Fi/eighth item is added, and SKIP is never hardware verification.
 - [ ] 11. (item 7+) One Arduino sketch flashed via `./cb arduino` behaves like its IDF twin;
       `Serial` output visible over Type-C (CDC on boot).
 - [ ] 12. (item 8+) Wi-Fi scan lists APs; BLE scan lists advertisers.

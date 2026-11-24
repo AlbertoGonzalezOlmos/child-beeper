@@ -1,8 +1,10 @@
 # Documentation index — child-beeper programming toolkit
 
-> Status: item-5 full gate is **14 pass, 0 fail, 2 skip**. Item-2/3/4 serial evidence and item-5's
-> no-card degraded capture are recorded in verification.md. Root 0.4.0 and mounted SD I/O remain
-> PENDING. Levels + checklist: [verification.md](verification.md).
+> Status: item-6's BSP **0.5.0**, `cb_bsp_part_result()`, exact self-test grammar and dashboard
+> contract are frozen; its full gate and hardware capture are **PENDING**. Item-5 full gate is **14
+> pass, 0 fail, 2 skip**. Item-2/3/4 serial evidence and item-5's no-card degraded capture are
+> recorded in verification.md; mounted SD I/O remains PENDING. Levels + checklist:
+> [verification.md](verification.md).
 
 Toolkit for the **Waveshare ESP32-S3-LCD-1.47B** (ESP32-S3R8, 16 MB flash, 8 MB octal PSRAM,
 172×320 ST7789 LCD *without touch*, QMI8658 IMU, 1× RGB LED, BOOT button, battery ADC, TF card,
@@ -53,12 +55,14 @@ components/cb_bsp/            # the BSP: CMakeLists, include/ (frozen headers), 
                               #   item 3: cb_rgb/cb_button/cb_battery + pure math
                               #   item 4: cb_i2c/cb_imu + pure math
                               #   item 5: cb_sd
+                              #   item 6: cb_bsp_part_result + version 0.5.0
 config/                       # sdkconfig.board.defaults + partitions.csv (3M factory, 8M FAT)
 examples/01_lcd_hello/        # canonical example pattern; item 2: display diagnostic app
 examples/02_rgb_button/       # item 3: capped RGB + BOOT-button events
 examples/03_battery/          # item 3: calibrated/fallback battery samples
 examples/04_imu/              # item 4: QMI8658 IMU diagnostic
 examples/05_sdcard/           # item 5: exclusive-create TF-card round-trip
+examples/06_dashboard/        # item 6: seven-part self-test + live LVGL dashboard
 tests/host/                   # host-compiled unit tests (pins, math, button FSM)
 tools/                        # cb.py + cbchecks/ (verify pipeline, static audits)
 docs/                         # this directory
@@ -75,7 +79,7 @@ arduino/                      # item 7: staged CBBoard library + sketches (absen
 | RGB LED, BOOT button, battery | `cb_rgb`, `cb_button`, `cb_battery` | `02_rgb_button`, `03_battery` | **item 3 build-verified** (round-2 `d7fabd3`: 12 pass, 0 fail, 2 skip, 129.0 s, 2026-11-23) | serial-verified: battery sample, RGB 20 % cap, button poller, boot summary 0.2.0; visual/multimeter/gesture PENDING (needs human) |
 | IMU QMI8658 (new `i2c_master`) | `cb_i2c`, `cb_imu`, `cb_imu_math` | `04_imu` | **item 4 build-verified**: 13 pass, 0 fail, 2 skip; sdkconfig-assert 5 targets | ✓ serial 2026-11-23: 0x6B, WHO 0x05, stable 0.99 g IMU samples; motion response + accuracy/bias calibration PENDING (needs human) |
 | TF card (SDMMC, no auto-format) | `cb_sd` | `05_sdcard` | **item 5 build-verified**: 14 pass, 0 fail, 2 skip; sdkconfig-assert 6 targets | ✓ no-card degraded path 2026-11-23: one direct init, both widths timed out, alive continued; mounted I/O and successful 1-bit fallback PENDING. A mount error is not proof that no card exists. |
-| Self-test + dashboard | item 6 | `06_dashboard`, `./cb selftest` | item 6 | ✗ |
+| Self-test + dashboard | `cb_bsp_part_result`, BSP **0.5.0** | `06_dashboard`, `./cb selftest` | **PENDING** — contract frozen; targeted/full builds not yet recorded | **PENDING** — checklist 10; golden no-card report has 5 PASS / 0 FAIL / 2 SKIP, and both SKIPs stay unverified |
 | Arduino parity (CBBoard, sketches) | item 7 | `arduino/` | item 7 | ✗ |
 | Wi-Fi / BLE scan (tier-2) | — | `08_wifi_scan`, `09_ble_scan` | item 8 | ✗ |
 
