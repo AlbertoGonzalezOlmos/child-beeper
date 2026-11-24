@@ -640,8 +640,8 @@ def cmd_arduino(args: argparse.Namespace) -> int:
         if not result.ok:
             _print(result.err, err=True)
             return CODE_FAIL
-    if not sketches:
-        _print("no Arduino sketches yet (arduino/ tree lands in item 7)")
+    if not sketches and not args.upload:
+        _print("no Arduino sketches found under arduino/ (expected arduino/sketches/<name>/<name>.ino)")
         return CODE_OK
     if args.sketches:
         wanted = set(args.sketches)

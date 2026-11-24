@@ -4,8 +4,11 @@ AR8: cbchecks.arduino is the sole mirror.txt parser — fail-closed, frozen 12-e
 AR9: staging destination + locked-FQBN compile wiring.
 AR10: pin-drift is a byte-for-byte staged-vs-canonical compare (mutated byte / dropped
       manifest line / post-stage canonical change / committed copy all FAIL).
-AR13: `./cb arduino --upload` guards the port before building and needs exactly one sketch.
+AR13: `./cb arduino --upload` guards the port before building and needs exactly one sketch
+      (zero or multiple → exit 3; round-2 B1).
 AR14: doctor escalates arduino-cli + core to fatal once arduino/ exists.
+Round 2: AR10's clean missing-canonical wording (B2) and the committed-fork ban — the library
+      is umbrella + manifest only, any other committed code file FAILs staging and pin-drift (B3).
 """
 
 from __future__ import annotations
@@ -206,6 +209,15 @@ class TestPinDrift(TempRepoTest):
         # read-only: the stale stage is left in place for the report to quote
         self.assertTrue((src / "cb_math.h").is_file())
 
+    def test_missing_canonical_file_fails_with_ruled_wording(self) -> None:
+        # Round-2 B2: a complete stage + a deleted canonical file is a clean FAIL with
+        # AR10's wording, not a FileNotFoundError exception detail.
+        self._stage()
+        (self.ctx.root / "components" / "cb_bsp" / "src" / "cb_imu_math.c").unlink()
+        status, detail = arduino.pin_drift(self.ctx)
+        self.assertEqual(status, "FAIL")
+        self.assertIn("components/cb_bsp/src/cb_imu_math.c missing", detail)
+
     def test_committed_mirror_copy_under_arduino_fails(self) -> None:
         self._stage()
         _write(
@@ -215,6 +227,35 @@ class TestPinDrift(TempRepoTest):
         status, detail = arduino.pin_drift(self.ctx)
         self.assertEqual(status, "FAIL")
         self.assertIn("committed mirror copy", detail)
+        # Round-2 B3: staging refuses it too, with the same (better) mirror message.
+        staged, err = arduino.stage_library(self.ctx)
+        self.assertIsNone(staged)
+        self.assertIn("committed mirror copy", err)
+
+    def test_committed_fork_code_file_fails_staging_and_pin_drift(self) -> None:
+        # Round-2 B3: the library is umbrella + manifest only — helpers.h is a fork.
+        fork = self.ctx.root / "arduino" / "libraries" / "CBBoard" / "src" / "helpers.h"
+        _write(fork, "/* forked helper */\n")
+        staged, err = arduino.stage_library(self.ctx)
+        self.assertIsNone(staged)
+        self.assertIn("arduino/libraries/CBBoard/src/helpers.h", err)
+        self.assertIn(
+            "unexpected committed code file in the library (AR1: umbrella + manifest only)", err
+        )
+        # pin-drift FAILs — both on a fresh tree (bootstrap refuses to stage) …
+        status, detail = arduino.pin_drift(self.ctx)
+        self.assertEqual(status, "FAIL")
+        self.assertIn("unexpected committed code file in the library", detail)
+        # … and when a byte-equal stage predates the fork: the scan is unconditional,
+        # so even a --fast gate (builds skipped, pin-drift still runs) catches it.
+        fork.unlink()
+        staged, err = arduino.stage_library(self.ctx)
+        self.assertIsNone(err, err)
+        assert staged is not None
+        _write(fork, "/* forked helper */\n")
+        status, detail = arduino.pin_drift(self.ctx)
+        self.assertEqual(status, "FAIL")
+        self.assertIn("unexpected committed code file in the library", detail)
 
     def test_missing_library_dir_fails(self) -> None:
         shutil.rmtree(self.ctx.root / "arduino" / "libraries" / "CBBoard")
@@ -313,6 +354,27 @@ class TestArduinoCommand(TempRepoTest):
             cli.ports_mod.guard_port = saved_guard  # type: ignore[assignment]
         self.assertEqual(code, 3)
         self.assertIn("exactly one sketch, got 2", output)
+
+    def test_upload_with_zero_sketches_is_exit_three(self) -> None:
+        # Round-2 B1: --upload with zero discovered sketches is a usage error, never a
+        # silent success — but the port guard still runs first (AR13).
+        import cb as cli
+
+        shutil.rmtree(self.root / "arduino")
+        code, output, runner = self._run_cli(["arduino", "--upload"])  # no board (setUp)
+        self.assertEqual(code, 2)
+        self.assertIn("BOOT", output)
+        self.assertEqual(runner.commands(), [])
+        saved_guard = cli.ports_mod.guard_port
+        cli.ports_mod.guard_port = lambda explicit=None: "/dev/ttyACM0"  # type: ignore[assignment]
+        try:
+            code, output, runner = self._run_cli(["arduino", "--upload"])
+        finally:
+            cli.ports_mod.guard_port = saved_guard  # type: ignore[assignment]
+        self.assertEqual(code, 3)
+        self.assertIn("exactly one sketch, got 0", output)
+        self.assertIn("none discovered", output)
+        self.assertEqual(runner.commands(), [], "nothing may run before the guard resolves")
 
     def test_upload_guards_the_port_before_building(self) -> None:
         # AR13: no board -> exit 2 + BOOT/RESET hint, and no build output at all.
