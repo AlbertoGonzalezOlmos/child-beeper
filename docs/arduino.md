@@ -1,7 +1,9 @@
 # Arduino path — staged CBBoard library + parity sketches
 
-> Status: item-7 AR1–AR17 contracts are frozen. The two sketches are built with the locked Arduino
-> toolchain through a generated, per-agent staging tree; build and hardware results are recorded in
+> Status: item-7 is build-verified by the coordinator's **18 pass, 0 fail, 0 SKIP** full gate, with
+> real pin-drift and both sketch builds. `rgb_blink` also has a measured serial-half PASS
+> (2026-11-23): upload exit 0, post-dim cycles and alive on Type-C. `button_events` upload and all
+> visible LED/gesture checks remain PENDING. Details and the actual capture are in
 > [verification.md](verification.md). Nothing on this page turns an upload or a numeric serial value
 > into visual/physical parity with the IDF examples.
 
@@ -263,9 +265,11 @@ human checks even if an event line is observed during a coordinator press.
 
 ## Checklist 11 evidence boundary
 
-The coordinator may record a serial-half PASS after one sketch compiles, uploads over Type-C and
-actually prints its contracted lines. Quote the upload exit and captured cycle/alive or event lines
-with a date. The following stay **PENDING** unless separately observed: visible LED hue/brightness,
-button feel and gesture timing, visual “behaves like its IDF twin” claims, behavior of any sketch not
-flashed, and long-run stability. Pin-drift proves source identity, not behavioral identity. See
-[verification.md](verification.md) checklist 11 for measured results.
+The coordinator recorded the item-7 serial-half PASS on **2026-11-23**: `./cb verify` completed
+**18 pass, 0 fail, 0 SKIP**, and `./cb arduino --upload rgb_blink` exited 0 before the sketch printed
+`cycle 1 r=51 g=0 b=0` through cycle 5 plus `alive #1`. The exact ordered capture is quoted in
+[verification.md](verification.md) checklist 11. The value 51 is the shared `cb_rgb_math_dim` 20%
+cap inside the Arduino sketch. `button_events` was compiled but not uploaded. Visible LED
+hue/brightness, button feel and gesture timing, visual “behaves like its IDF twin” claims, behavior
+of any sketch not flashed, and long-run stability stay **PENDING**. Pin-drift proves source identity,
+not behavioral identity.

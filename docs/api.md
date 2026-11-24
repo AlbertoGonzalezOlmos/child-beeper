@@ -1,7 +1,8 @@
 # BSP API reference (items 1–7 — frozen surface)
 
-> Status: item-7 AR1–AR17 freezes the Arduino umbrella and 12-file staging mirror without changing
-> any canonical `cb_*` symbol; its builds and serial capture are PENDING. Item-6 ST1–ST8 and the
+> Status: item-7 AR1–AR17 is build-verified by the coordinator's **18 pass, 0 fail, 0 SKIP** full
+> gate, and `rgb_blink` has a measured serial-half PASS with the shared 20% cap on hardware;
+> `button_events` upload and all visible LED/gesture checks remain PENDING. Item-6 ST1–ST8 and the
 > ITEM6-RULINGS self-test/dashboard contract are frozen here, with BSP version **0.5.0**. The
 > coordinator's **15 pass, 0 fail, 2 skip** full gate and serial-half hardware capture are recorded;
 > the final round-2 gate, visual checks and live/alive soak are PENDING. Item-5's full gate is **14

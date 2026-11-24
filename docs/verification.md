@@ -2,9 +2,10 @@
 
 > Status (updated for item 6): item-4 full gate is **13 pass, 0 fail, 2 skip**, with item-2/3/4
 > serial checks **hardware-verified** as detailed below. Item-5's full gate is **14 pass, 0 fail,
-> 2 skip** and its no-card degraded path is **hardware-verified 2026-11-23**. Item-7's staged
-> CBBoard mirror and two Arduino sketches are frozen, but their builds and serial capture are
-> **PENDING**. Item-6's **15 pass, 0 fail, 2 skip** full gate and serial-half self-test capture are
+> 2 skip** and its no-card degraded path is **hardware-verified 2026-11-23**. Item-7's full gate is
+> **18 pass, 0 fail, 0 SKIP**, with real pin-drift and both required Arduino builds; `rgb_blink`
+> also has a measured serial-half PASS. `button_events` upload and visible LED/gesture behavior
+> remain **PENDING**. Item-6's **15 pass, 0 fail, 2 skip** full gate and serial-half self-test capture are
 > recorded. Its final round-2 full gate, root 0.5.0 regression, live/alive soak and dashboard
 > visual checks are **PENDING**. Earlier root-version and mounted SD captures retain their
 > historical status. Display/LED visuals, button gestures, multimeter accuracy, IMU
@@ -77,6 +78,13 @@ Rule (also in `AGENTS.md`): *never claim hardware-verified without a board.*
   heartbeat: the no-card degraded path is **hardware-verified**. **A mount error is not proof that
   no card exists.** Mounted width, capacity, round-trip, clean unmount and successful 1-bit fallback
   remain **PENDING**; exact lines are in checklist 9 below.
+- **Item-7 coordinator gate/serial status (2026-11-23)**: `./cb verify` completed **18 pass, 0 fail,
+  0 skip**, including **226 CLI tests**, 47 host tests, real pin-drift on 12 byte-equal mirror files,
+  `arduino:button_events` and `arduino:rgb_blink` compiled against the staged library, seven
+  sdkconfig targets, and `flash+monitor+arduino` guards. `./cb arduino --upload rgb_blink` then
+  uploaded successfully and printed the exact post-dim cycle and alive lines quoted in checklist 11.
+  This is the item-7 build + RGB serial-half PASS; `button_events` upload and visible LED/gesture
+  behavior remain PENDING.
 - **Item-6 coordinator gate/serial status**: the full gate on the reviewed implementation completed
   **15 pass, 0 fail, 2 skip**; app and all six examples built, sdkconfig-assert passed all **seven**
   targets, host tests passed **47**, and CLI tests passed **152**. The 2026-11-23 hardware-session
@@ -179,8 +187,9 @@ Steps run in a **fixed order** with **stable ids**; each prints `[PASS]/[FAIL]/[
    trailing drain and, in round 3, contract content for every `SELFTEST` line plus required SD
    mounted/width and numeric battery/IMU/LCD sanity. The final item-6 suite is **185 tests** at
    `83a525f`. Item 7 adds manifest/staging, pin-drift, audit-scope, doctor, compile/upload and
-   missing-sketch negatives; record its observed new count rather than an estimate. No board or
-   network is needed for these Python tests.
+   missing-sketch negatives. Its initial full gate ran **226** tests; round 2 adds zero-sketch upload,
+   missing-canonical and committed-fork negatives, bringing the current suite to **229 tests**. No
+   board or network is needed for these Python tests.
 4. `pin-drift` — stages through the sole `tools/cbchecks/arduino.py` parser, then byte-compares all
    **12** mirror files (seven headers + five implementations) against `components/cb_bsp/`.
    Mismatches report `pin-drift <relpath> differs from components/cb_bsp/…`; missing files,
@@ -568,27 +577,40 @@ Procedure per line: run the command, compare with "expected", tick and fill in d
         calibration and signal integrity, and every uninjected driver failure path. Button is
         always `SKIP reason=needs-human poller=running`; a press window never makes it PASS. No
         Wi-Fi/eighth item is added, and SKIP is never hardware verification.
-- [ ] 11. (item 7) **Arduino parity — contracts frozen; build and serial-half checks PENDING until
-      measured.** The two sketches are `rgb_blink` and `button_events`; the library has only
+- [ ] 11. (item 7) **Arduino parity — gate and RGB serial-half PASS 2026-11-23; button upload and
+      visual/physical parity PENDING.** The two sketches are `rgb_blink` and `button_events`; the library has only
       `CBBoard.h`, `mirror.txt` and `library.properties`, never an `.ino` or a second committed
       mirror copy.
-      - [ ] **Gate/staging — PENDING**: coordinator full `./cb verify` must show real
-        `pin-drift` PASS (12 byte-equal files), `audit-static` PASS including `arduino/`,
-        `arduino:rgb_blink` and `arduino:button_events` builds, and no synthetic `arduino:*` SKIP.
-        Confirm the exact locked FQBN and staged `--libraries` path in logs. Deleting a required
-        sketch FAILs; fast mode alone skips the builds. Missing arduino-cli/core 3.3.12 is fatal
-        doctor exit 3 once `arduino/` exists. Python negatives cover a mutated byte, dropped
-        manifest entry, missing sketch and two-sketch upload rejection.
-      - [ ] **No-board upload guard — PENDING**: `CB_FORCE_NO_PORTS=1 ./cb arduino rgb_blink
-        --upload` exits **2** with BOOT+RESET before staging/building. Zero or multiple sketches
-        with `--upload` exits **3**. Upload success is not accepted as serial evidence by itself.
-      - [ ] **RGB serial half — PENDING**: coordinator runs
-        `./cb arduino rgb_blink --upload --port /dev/ttyACM0`, records exit 0, then captures raw
-        Type-C `Serial`: `rgb_blink: cycle %u r=%u g=%u b=%u` every ~2 s and
-        `rgb_blink: alive #%u` every ~5 s. Expected first post-dim sequence is
-        `cycle 1 r=51 g=0 b=0`, `cycle 2 r=0 g=51 b=0`, `cycle 3 r=0 g=0 b=51`,
-        `cycle 4 r=51 g=51 b=51`, `cycle 5 r=0 g=0 b=0`. Quote actual lines and timestamps;
-        missing early output is a capture issue, not permission to invent it.
+      - [x] **Gate/staging — PASS 2026-11-23**: coordinator full `./cb verify` completed
+        **18 pass, 0 fail, 0 SKIP**, with real `pin-drift` PASS (12 byte-equal files),
+        `audit-static` including `arduino/`, `arduino:rgb_blink` and `arduino:button_events`
+        compiled against the staged library, and no synthetic `arduino:*` SKIP. Seven sdkconfig
+        targets, 47 host tests and **226 CLI tests** passed; logs confirm the exact locked FQBN
+        and staged `--libraries` path. Deleting a required sketch FAILs; fast mode alone skips the
+        builds. Missing arduino-cli/core 3.3.12 is fatal doctor exit 3 once `arduino/` exists.
+        Python negatives cover a mutated byte, dropped manifest entry, missing sketch and
+        two-sketch upload rejection. The round-2 docs-lane rerun passed **229/229** tests after
+        adding zero-sketch upload, missing-canonical and committed-fork negatives.
+      - [x] **No-board upload guard — PASS**: the full gate's `guards-no-board` step reports
+        `flash+monitor+arduino exit 2 with the recovery hint (CB_FORCE_NO_PORTS=1)`, proving the
+        Arduino guard fires before staging/building. Zero or multiple sketches with `--upload`
+        exits **3**. Upload success is not accepted as serial evidence by itself.
+      - [x] **RGB serial half — PASS 2026-11-23**: coordinator ran
+        `./cb arduino --upload rgb_blink`, recorded exit 0, and captured the following raw Type-C
+        `Serial` lines. Values 51 are the shared `cb_rgb_math_dim` 20% peak cap applied in the
+        Arduino sketch, not a hand-maintained RGB implementation:
+
+        ```text
+        rgb_blink: cycle 1 r=51 g=0 b=0
+        rgb_blink: cycle 2 r=0 g=51 b=0
+        rgb_blink: cycle 3 r=0 g=0 b=51
+        rgb_blink: alive #1
+        rgb_blink: cycle 4 r=51 g=51 b=51
+        rgb_blink: cycle 5 r=0 g=0 b=0
+        ```
+
+        This proves compile, guarded upload and the printed post-dim values/alive line, not visible
+        hue/brightness or visual IDF-twin parity.
       - [ ] **Button serial half — PENDING unless separately flashed**: if the coordinator chooses
         `button_events` instead/additionally, require `button_events: ready poll_ms=10` once,
         `button_events: button event <TOKEN>` for observed FSM events, and

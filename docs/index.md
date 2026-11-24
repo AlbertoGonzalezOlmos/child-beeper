@@ -1,7 +1,9 @@
 # Documentation index — child-beeper programming toolkit
 
-> Status: item-7 AR1–AR17 freezes the staged CBBoard mirror and two Arduino sketches; their builds
-> and hardware capture are **PENDING**. Item-6's BSP **0.5.0**, `cb_bsp_part_result()`, exact
+> Status: item-7's full gate is **18 pass, 0 fail, 0 SKIP**, with real pin-drift and both required
+> Arduino sketch builds; `rgb_blink` upload and serial-half evidence are recorded. `button_events`
+> upload and visible LED/gesture parity remain **PENDING**. Item-6's BSP **0.5.0**,
+> `cb_bsp_part_result()`, exact
 > self-test grammar and dashboard contract are frozen. Its full gate and serial-half capture are
 > recorded; the final round-2 gate, dashboard visuals and live/alive soak are **PENDING**. Item-5
 > full gate is **14
@@ -85,7 +87,7 @@ arduino/                      # item 7: CBBoard umbrella + mirror.txt; rgb_blink
 | IMU QMI8658 (new `i2c_master`) | `cb_i2c`, `cb_imu`, `cb_imu_math` | `04_imu` | **item 4 build-verified**: 13 pass, 0 fail, 2 skip; sdkconfig-assert 5 targets | ✓ serial 2026-11-23: 0x6B, WHO 0x05, stable 0.99 g IMU samples; motion response + accuracy/bias calibration PENDING (needs human) |
 | TF card (SDMMC, no auto-format) | `cb_sd` | `05_sdcard` | **item 5 build-verified**: 14 pass, 0 fail, 2 skip; sdkconfig-assert 6 targets | ✓ no-card degraded path 2026-11-23: one direct init, both widths timed out, alive continued; mounted I/O and successful 1-bit fallback PENDING. A mount error is not proof that no card exists. |
 | Self-test + dashboard | `cb_bsp_part_result`, BSP **0.5.0** | `06_dashboard`, `./cb selftest` | **Full gate 15/0/2 recorded**; app + six examples, sdkconfig 7 targets; final item-6 CLI suite **185 tests** at `83a525f`; final round-2 gate PENDING | **✓ serial-half 2026-11-23** — exit 0, exact gold shapes, battery 4209 mV, IMU 0x6B/1.00 g, 2 SKIPs unverified; visuals, live/alive soak, mounted card and root 0.5.0 PENDING |
-| Arduino parity (staged CBBoard, 12 mirror files) | `CBBoard.h` umbrella + canonical pure headers/sources | `rgb_blink`, `button_events` | **PENDING** — staged compiles, real pin-drift and required `arduino:<sketch>` steps | **PENDING** — checklist 11 serial half; visible LED/gesture parity stays human-only |
+| Arduino parity (staged CBBoard, 12 mirror files) | `CBBoard.h` umbrella + canonical pure headers/sources | `rgb_blink`, `button_events` | **Full gate 18/0/0** — real pin-drift, both required builds, seven sdkconfig targets, guards cover Arduino; round-2 suite **229 CLI tests** | **✓ RGB serial-half 2026-11-23** — upload exit 0, cycles 1–5 post-dim and alive #1; `button_events` upload, LED appearance and button feel PENDING |
 | Wi-Fi / BLE scan (tier-2) | — | `08_wifi_scan`, `09_ble_scan` | item 8 | ✗ |
 
 Update this table in the review round of each item — it is the one place that says, at a glance,
