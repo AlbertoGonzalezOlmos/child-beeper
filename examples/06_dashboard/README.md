@@ -7,8 +7,8 @@ live battery/IMU values and a 5 s `alive` heartbeat. It is the firmware behind `
 (glm53's strict ST2 parser validates exactly these lines).
 
 **Status:** build-verified (`./cb build 06_dashboard`, IDF v6.1, 06_dashboard.bin 685168 bytes).
-Hardware-pending — the serial capture is `docs/verification.md` checklist 10; nothing here is
-claimed hardware-verified until that capture exists.
+Serial-half hardware-verified 2026-11-23 (checklist 10); dashboard visuals, button gestures and
+soak stay PENDING (needs human).
 
 ## What the screen shows (172×320 ST7789, labels only)
 
