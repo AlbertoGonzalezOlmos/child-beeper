@@ -1,9 +1,10 @@
-# BSP API reference (items 1–6 — frozen surface)
+# BSP API reference (items 1–7 — frozen surface)
 
-> Status: item-6 ST1–ST8 and the ITEM6-RULINGS self-test/dashboard contract are frozen here, with
-> BSP version **0.5.0**. The coordinator's **15 pass, 0 fail, 2 skip** full gate and serial-half
-> hardware capture are recorded; the final round-2 gate, visual checks and live/alive soak are
-> PENDING. Item-5's full gate is **14
+> Status: item-7 AR1–AR17 freezes the Arduino umbrella and 12-file staging mirror without changing
+> any canonical `cb_*` symbol; its builds and serial capture are PENDING. Item-6 ST1–ST8 and the
+> ITEM6-RULINGS self-test/dashboard contract are frozen here, with BSP version **0.5.0**. The
+> coordinator's **15 pass, 0 fail, 2 skip** full gate and serial-half hardware capture are recorded;
+> the final round-2 gate, visual checks and live/alive soak are PENDING. Item-5's full gate is **14
 > pass, 0 fail, 2 skip**, and its no-card degraded path is recorded in verification.md. Mounted I/O
 > and earlier root-version captures retain their historical status there. Item 4 is build-verified
 > (**13 pass, 0 fail, 2 skip**) and its IMU serial capture is recorded in verification.md. Item 3's
@@ -87,8 +88,10 @@ do not use IDF stubs to manufacture a success path.
 
 ## `cb_pins.h` — pure macros, no includes, C89-safe
 
-Single source of truth for every GPIO/geometry constant; the Arduino tree keeps byte-identical
-copies (checked by `./cb verify` step `pin-drift`). Values are tabulated in
+Single source of truth for every GPIO/geometry constant. Arduino builds generate byte-identical
+staged copies under `${CB_BUILD_ROOT:-build}/arduino/libraries/CBBoard/src/`; `./cb verify` step
+`pin-drift` compares all 12 staged mirror files against this canonical tree rather than relying on
+committed duplicates. Values are tabulated in
 [hardware.md](hardware.md#pin-table-single-source-of-truth-cb_pinsh--do-not-renumber-anywhere-else);
 highlights: `CB_LCD_SPI_HOST 1` (= `SPI2_HOST`), `CB_BAT_ADC_UNIT 0` (= `ADC_UNIT_1`), battery
 `CB_BAT_DIVIDER_NUM 3` / `CB_BAT_DIVIDER_DEN 1` / `CB_BAT_CAL_GAIN_NUM 700` /
@@ -821,6 +824,36 @@ battery calibration evidence and trailing drain garbage.
 - Valid RESULT:FAIL or any grammar/timeout failure: name the failed rule/items and exit **1**.
 - No serial port: the existing guard runs before build/flash and exits **2** with the BOOT+RESET
   recovery hint. Build/flash failures also remain failures, never parser successes.
+
+## Arduino mirror and umbrella (item 7 — AR1–AR17)
+
+`arduino/libraries/CBBoard/CBBoard.h` is an **umbrella-only** consumer header, not a new BSP driver
+or C++ façade. It includes these seven canonical headers by name and documents their mapping to core
+Arduino calls:
+
+```c
+#include "cb_pins.h"
+#include "cb_math.h"
+#include "cb_button_fsm.h"
+#include "cb_qmi8658_regs.h"
+#include "cb_rgb_math.h"
+#include "cb_battery_math.h"
+#include "cb_imu_math.h"
+```
+
+`arduino/libraries/CBBoard/mirror.txt` lists those headers plus the five implementations required at
+link time: `src/cb_math.c`, `src/cb_button_fsm.c`, `src/cb_rgb_math.c`,
+`src/cb_battery_math.c`, and `src/cb_imu_math.c`. Exactly **12** entries are staged as
+`src/<basename>` under `${CB_BUILD_ROOT:-build}/arduino/libraries/CBBoard/src/`, along with the
+committed umbrella. Nothing is committed twice, and the library contains no `.ino` that could be
+discovered as an extra sketch.
+
+`tools/cbchecks/arduino.py` is the sole manifest parser. Its consumers stage and compile with
+`--libraries <build-root>/arduino/libraries` and a per-sketch `--build-path`; `pin-drift` compares
+each staged file byte-for-byte with `components/cb_bsp/`. A missing file, dropped required entry or
+mutated staged byte is a FAIL. Sketches use core Arduino APIs (`rgbLedWrite`, `digitalRead`,
+`millis`, and related core-3.x functions) plus these existing pure functions. No new public `cb_*`
+symbol, C++ wrapper, duplicate driver, canonical-header change, or new host-C helper is introduced.
 
 ## Threading / LVGL rules
 

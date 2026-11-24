@@ -2,10 +2,12 @@
 
 > Status (updated for item 6): item-4 full gate is **13 pass, 0 fail, 2 skip**, with item-2/3/4
 > serial checks **hardware-verified** as detailed below. Item-5's full gate is **14 pass, 0 fail,
-> 2 skip** and its no-card degraded path is **hardware-verified 2026-11-23**. Item-6's **15 pass,
-> 0 fail, 2 skip** full gate and serial-half self-test capture are recorded. Its final round-2
-> full gate, root 0.5.0 regression, live/alive soak and dashboard visual checks are **PENDING**.
-> Earlier root-version and mounted SD captures retain their historical status. Display/LED visuals, button gestures, multimeter accuracy, IMU
+> 2 skip** and its no-card degraded path is **hardware-verified 2026-11-23**. Item-7's staged
+> CBBoard mirror and two Arduino sketches are frozen, but their builds and serial capture are
+> **PENDING**. Item-6's **15 pass, 0 fail, 2 skip** full gate and serial-half self-test capture are
+> recorded. Its final round-2 full gate, root 0.5.0 regression, live/alive soak and dashboard
+> visual checks are **PENDING**. Earlier root-version and mounted SD captures retain their
+> historical status. Display/LED visuals, button gestures, multimeter accuracy, IMU
 > motion/accuracy/bias calibration and mounted SD I/O remain PENDING (needs human/card). Details
 > and measured dates follow; no item-6 example below is itself hardware evidence.
 
@@ -132,6 +134,8 @@ Steps run in a **fixed order** with **stable ids**; each prints `[PASS]/[FAIL]/[
 
 1. `doctor` — toolchain/environment checks (IDF v6.1, xtensa gcc 15.2.0, arduino-cli 1.4.1, core
    `esp32:esp32` 3.3.12, disk space, serial ports). **No board is a WARN here, never a FAIL.**
+   Once `arduino/` exists, a missing/broken arduino-cli or missing/wrong pinned core is instead a
+   **fatal** environment problem (exit 3); optional tier-2 LVGL absence stays informational.
 2. `host-tests` — `make -C tests/host test`; binary at `${CB_BUILD_ROOT:-build}/host/run_tests`;
    TAP-ish output (`ok - <name>` / `not ok - <name>` / final `1..N`). Covers the pin-macro contract,
    `cb_math` (duty clamp, LE decode, scale math, ADC conversion), `cb_button_fsm` (single click,
@@ -172,10 +176,16 @@ Steps run in a **fixed order** with **stable ids**; each prints `[PASS]/[FAIL]/[
    including prefixed+ANSI input, absent-SKIP arithmetic, target preference and trailing live/alive
    handling. Round 2 adds required-06 deletion protection, duplicate BEGIN/token and illegal-SKIP rejection,
    exact button/poller and per-item evidence checks, duplicate-key rejection, and the post-RESULT
-   trailing drain. The current item-6 suite is **170 tests** at `acd83ef`; it needs no board or
-   network.
-4. `pin-drift` — byte-compares Arduino copies of the shared headers against
-   `components/cb_bsp/include/`. **SKIP while `arduino/` is absent.**
+   trailing drain and, in round 3, contract content for every `SELFTEST` line plus required SD
+   mounted/width and numeric battery/IMU/LCD sanity. The final item-6 suite is **185 tests** at
+   `83a525f`. Item 7 adds manifest/staging, pin-drift, audit-scope, doctor, compile/upload and
+   missing-sketch negatives; record its observed new count rather than an estimate. No board or
+   network is needed for these Python tests.
+4. `pin-drift` — stages through the sole `tools/cbchecks/arduino.py` parser, then byte-compares all
+   **12** mirror files (seven headers + five implementations) against `components/cb_bsp/`.
+   Mismatches report `pin-drift <relpath> differs from components/cb_bsp/…`; missing files,
+   dropped manifest entries and stale copies FAIL. Tests mutate one byte and drop one required
+   entry. **SKIP only while `arduino/` is absent.**
 5. `audit-static` — forbidden constructs + absolute-path scan (scope below).
 6. `deps-pins` — every committed `dependencies.lock` must resolve **lvgl 9.5.0**,
    **esp_lvgl_port 2.9.0**, **led_strip 3.1.1**, **idf 6.1.0**, and
@@ -203,15 +213,19 @@ Steps run in a **fixed order** with **stable ids**; each prints `[PASS]/[FAIL]/[
    entry is present**; cb_bsp's manifest normally makes them present even though those examples
    do not call LVGL. (`CONFIG_LV_OS_NONE=y` is deliberate: esp_lvgl_port owns the LVGL task;
    demanding an `LV_OS_FREERTOS`-style setting would fail a correct build.)
-10. `arduino:<sketch>` — while `arduino/` is absent a single **synthetic step id `arduino:*`** is
-    emitted as SKIP instead of per-sketch steps.
+10. `arduino:<sketch>` — item 7 replaces the synthetic `arduino:*` SKIP with required
+    `arduino:rgb_blink` and `arduino:button_events` compile steps after staging. A deleted required
+    sketch FAILs rather than vanishing; `--fast` deliberately skips both compile steps.
 11. `guards-no-board` — runs `./cb flash` / `./cb monitor` with `CB_FORCE_NO_PORTS=1`; both must
-    exit **2** with the BOOT+RESET recovery hint, without invoking any build or esptool.
+    exit **2** with the BOOT+RESET recovery hint, without invoking any build or esptool. Item 7 adds
+    `./cb arduino rgb_blink --upload`: exactly one sketch is required, and the no-port guard must
+    exit **2** before any staging/compile. Zero/multiple upload sketches are usage error 3; compile
+    or upload failure is 1 and success is 0.
 12. `report` — writes `${CB_BUILD_ROOT:-build}/verify-report.md` and `.json` (per-step status,
     durations, app sizes via `idf.py size --format json` when it succeeds, `.bin`-size fallback
     otherwise). `./cb report` prints the markdown.
 
-**Item-1 strictness + item-3 R9b + item-4 R25 + item-5 SD13 + item-6 round 2:**
+**Item-1 strictness + item-3 R9b + item-4 R25 + item-5 SD13 + item-6 round 2 + item-7 AR12:**
 `tests/host/Makefile`, `build:app`, `build:01_lcd_hello`, `build:02_rgb_button`,
 `build:03_battery`, `build:04_imu`, `build:05_sdcard`, and `build:06_dashboard` are *required* —
 missing files make those steps **FAIL**, not SKIP, even in `--fast` mode. Full and fast missing-06
@@ -220,7 +234,11 @@ missing-05 tests require the equivalent 05 detail. SKIP is legitimate only for `
 `arduino:*` (no `arduino/` tree yet), build and dependent `sdkconfig-assert` steps deliberately
 skipped by `--fast`, and `--offline` sub-checks when `unshare` is unavailable. With all item-6
 projects present, a normal full gate still has the two expected Arduino-related SKIPs;
-sdkconfig-assert covers **seven** targets (app + six examples).
+sdkconfig-assert covers **seven** targets (app + six examples). Item 7 additionally requires
+`arduino/sketches/rgb_blink` and `arduino/sketches/button_events`: deleting either sketch is a
+FAIL, while `--fast` skips both real `arduino:<sketch>` build steps. With `arduino/` present,
+`pin-drift` is a PASS/FAIL check, not a SKIP, and a full gate no longer emits the synthetic
+`arduino:*` SKIP.
 
 **Exit codes:** a FAIL in `doctor` → **3**; any other FAIL → **1**; all PASS/SKIP → **0**.
 (Globally: 0 ok, 1 build/test failure, 2 board/port absent, 3 usage/environment.)
@@ -242,9 +260,11 @@ are all present in the local caches — see [troubleshooting.md](troubleshooting
 ## `audit-static` scope (what it scans)
 
 - **Construct rules** (forbidden list below) scan only `.c .h .cpp .hpp .ino CMakeLists.txt .cmake`
-  files under `main/`, `components/`, `examples/`, `tests/` and `tools/` (the whole `tools/` tree).
-  `docs/**` and `*.md` are **exempt** — documentation must be able to quote forbidden symbols
-  (this file and [troubleshooting.md](troubleshooting.md) do exactly that).
+  files under `main/`, `components/`, `examples/`, `tests/`, `tools/` (the whole `tools/` tree),
+  and — from item 7 — **`arduino/`**. `docs/**` and `*.md` are **exempt** — documentation must be
+  able to quote forbidden symbols (this file and [troubleshooting.md](troubleshooting.md) do exactly
+  that). Generated `build/` staging is skipped, while committed `.ino`/`.h`/`.cpp` under `arduino/`
+  obey the same rules as IDF sources.
 - **Absolute-path rule**: no absolute home-directory paths in any tracked text file (docs use
   `~/…` form); single allowlist entry `eim_config.toml` (pre-existing, untouchable).
 - Forbidden constructs (live in `tools/cbchecks/`): `driver/i2c.h`, `lcd_color_rgb_endian_t`,
@@ -266,7 +286,9 @@ are all present in the local caches — see [troubleshooting.md](troubleshooting
 - Code-level display facts: backlight duty-0-at-init, the `LV_EVENT_REFR_READY` bring-up hook,
   `cb_bsp_init` idempotency, LVGL port defaults — proven by code review + compiling, not by gate
   steps (the gate deliberately does not fake these with source greps).
-- Anything under `arduino/` until item 7 lands.
+- Arduino physical behavior. A staged compile and byte-identical mirror prove build/source parity,
+  not LED appearance, button feel/gesture timing, battery accuracy, IMU behavior, or IDF-twin visual
+  behavior. Those require checklist 11's upload/serial capture and human observation.
 
 `./cb monitor` itself is a live pass-through: it prints `cb: monitoring — press Ctrl-] to quit`,
 streams the console, warns when stdin is not a terminal (Ctrl-] may not reach it), and honours
@@ -546,8 +568,38 @@ Procedure per line: run the command, compare with "expected", tick and fill in d
         calibration and signal integrity, and every uninjected driver failure path. Button is
         always `SKIP reason=needs-human poller=running`; a press window never makes it PASS. No
         Wi-Fi/eighth item is added, and SKIP is never hardware verification.
-- [ ] 11. (item 7+) One Arduino sketch flashed via `./cb arduino` behaves like its IDF twin;
-      `Serial` output visible over Type-C (CDC on boot).
+- [ ] 11. (item 7) **Arduino parity — contracts frozen; build and serial-half checks PENDING until
+      measured.** The two sketches are `rgb_blink` and `button_events`; the library has only
+      `CBBoard.h`, `mirror.txt` and `library.properties`, never an `.ino` or a second committed
+      mirror copy.
+      - [ ] **Gate/staging — PENDING**: coordinator full `./cb verify` must show real
+        `pin-drift` PASS (12 byte-equal files), `audit-static` PASS including `arduino/`,
+        `arduino:rgb_blink` and `arduino:button_events` builds, and no synthetic `arduino:*` SKIP.
+        Confirm the exact locked FQBN and staged `--libraries` path in logs. Deleting a required
+        sketch FAILs; fast mode alone skips the builds. Missing arduino-cli/core 3.3.12 is fatal
+        doctor exit 3 once `arduino/` exists. Python negatives cover a mutated byte, dropped
+        manifest entry, missing sketch and two-sketch upload rejection.
+      - [ ] **No-board upload guard — PENDING**: `CB_FORCE_NO_PORTS=1 ./cb arduino rgb_blink
+        --upload` exits **2** with BOOT+RESET before staging/building. Zero or multiple sketches
+        with `--upload` exits **3**. Upload success is not accepted as serial evidence by itself.
+      - [ ] **RGB serial half — PENDING**: coordinator runs
+        `./cb arduino rgb_blink --upload --port /dev/ttyACM0`, records exit 0, then captures raw
+        Type-C `Serial`: `rgb_blink: cycle %u r=%u g=%u b=%u` every ~2 s and
+        `rgb_blink: alive #%u` every ~5 s. Expected first post-dim sequence is
+        `cycle 1 r=51 g=0 b=0`, `cycle 2 r=0 g=51 b=0`, `cycle 3 r=0 g=0 b=51`,
+        `cycle 4 r=51 g=51 b=51`, `cycle 5 r=0 g=0 b=0`. Quote actual lines and timestamps;
+        missing early output is a capture issue, not permission to invent it.
+      - [ ] **Button serial half — PENDING unless separately flashed**: if the coordinator chooses
+        `button_events` instead/additionally, require `button_events: ready poll_ms=10` once,
+        `button_events: button event <TOKEN>` for observed FSM events, and
+        `button_events: alive #%u` every ~5 s. Valid tokens are PRESS, RELEASE, CLICK,
+        DOUBLE_CLICK and LONG_PRESS. No event may be fabricated for an unattended run.
+      - [ ] **Visual/physical parity — PENDING (needs human)**: LED hue/brightness/brownout,
+        button feel and physical gesture timing, and visual “behaves like its IDF twin” claims.
+        Numeric `r/g/b` lines prove shared dim math and values passed to `rgbLedWrite`, not visible
+        brightness. FSM event lines do not prove button feel. Unflashed sketch behavior, battery /
+        IMU physical behavior and long-run stability also remain PENDING. Pin-drift proves source
+        identity, not behavioral identity.
 - [ ] 12. (item 8+) Wi-Fi scan lists APs; BLE scan lists advertisers.
 
 Unticked boxes are **not hardware-verified**; build/code status is stated above, and human-only
