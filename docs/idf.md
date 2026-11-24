@@ -1,8 +1,9 @@
 # ESP-IDF path — environment, `./cb`, and raw `idf.py`
 
 > Status: item-4 full gate is **13 pass, 0 fail, 2 skip**, with item-2/3/4 serial evidence
-> recorded. Item-5 SDMMC build instructions are frozen; its full gate, root 0.4.0 summary and card
-> evidence are PENDING. Proof levels: [verification.md](verification.md).
+> recorded. Item-5's full gate is **14 pass, 0 fail, 2 skip** and its no-card degraded path is
+> recorded. Root 0.4.0 and mounted-card evidence remain PENDING. Proof levels:
+> [verification.md](verification.md).
 
 ## Toolchain (pinned)
 

@@ -1,9 +1,8 @@
 # Documentation index — child-beeper programming toolkit
 
-> Status: item-5 implementation. Item-4 completed **13 pass, 0 fail, 2 skip**, and item-2/3/4
-> serial evidence is recorded in verification.md. Item-5's full gate, root 0.4.0 summary and SD
-> card evidence are PENDING; card presence is unknown, so no mounted-path claim is made.
-> Levels + checklist: [verification.md](verification.md).
+> Status: item-5 full gate is **14 pass, 0 fail, 2 skip**. Item-2/3/4 serial evidence and item-5's
+> no-card degraded capture are recorded in verification.md. Root 0.4.0 and mounted SD I/O remain
+> PENDING. Levels + checklist: [verification.md](verification.md).
 
 Toolkit for the **Waveshare ESP32-S3-LCD-1.47B** (ESP32-S3R8, 16 MB flash, 8 MB octal PSRAM,
 172×320 ST7789 LCD *without touch*, QMI8658 IMU, 1× RGB LED, BOOT button, battery ADC, TF card,
@@ -75,7 +74,7 @@ arduino/                      # item 7: staged CBBoard library + sketches (absen
 | LCD + LVGL 9.5 + backlight + pattern | `cb_lcd`, `cb_backlight`, `cb_pattern` | `01_lcd_hello` diagnostic | item 2 (2026-11-08) | ✓ serial 2026-11-23 (init, backlight hook, 12 frames); visuals PENDING |
 | RGB LED, BOOT button, battery | `cb_rgb`, `cb_button`, `cb_battery` | `02_rgb_button`, `03_battery` | **item 3 build-verified** (round-2 `d7fabd3`: 12 pass, 0 fail, 2 skip, 129.0 s, 2026-11-23) | serial-verified: battery sample, RGB 20 % cap, button poller, boot summary 0.2.0; visual/multimeter/gesture PENDING (needs human) |
 | IMU QMI8658 (new `i2c_master`) | `cb_i2c`, `cb_imu`, `cb_imu_math` | `04_imu` | **item 4 build-verified**: 13 pass, 0 fail, 2 skip; sdkconfig-assert 5 targets | ✓ serial 2026-11-23: 0x6B, WHO 0x05, stable 0.99 g IMU samples; motion response + accuracy/bias calibration PENDING (needs human) |
-| TF card (SDMMC, no auto-format) | `cb_sd` | `05_sdcard` | item 5 full gate PENDING | Card presence unknown; mounted I/O and 1-bit fallback PENDING. A mount error is not proof that no card exists. |
+| TF card (SDMMC, no auto-format) | `cb_sd` | `05_sdcard` | **item 5 build-verified**: 14 pass, 0 fail, 2 skip; sdkconfig-assert 6 targets | ✓ no-card degraded path 2026-11-23: one direct init, both widths timed out, alive continued; mounted I/O and successful 1-bit fallback PENDING. A mount error is not proof that no card exists. |
 | Self-test + dashboard | item 6 | `06_dashboard`, `./cb selftest` | item 6 | ✗ |
 | Arduino parity (CBBoard, sketches) | item 7 | `arduino/` | item 7 | ✗ |
 | Wi-Fi / BLE scan (tier-2) | — | `08_wifi_scan`, `09_ble_scan` | item 8 | ✗ |

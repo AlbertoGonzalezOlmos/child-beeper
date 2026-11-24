@@ -2,8 +2,8 @@
 
 > Status (updated for item 5): chip identity, flash size, PSRAM presence, console and app boot are
 > **hardware-verified**. Item-2 display, item-3 RGB/button/battery and item-4 IMU serial checks are
-> also recorded. Item-5 SDMMC behavior below is the frozen design contract until the coordinator
-> captures a card run; card presence is unknown and no mounted-path fact is claimed. Pin values
+> also recorded. Item-5's no-card degraded path was serial-observed on 2026-11-23; mounted I/O and
+> successful fallback remain PENDING. A mount error is not proof of physical card absence. Pin values
 > mirror `components/cb_bsp/include/cb_pins.h`; measurements live in [verification.md](verification.md).
 
 ## Board / SoC
@@ -187,8 +187,13 @@ Other frozen constants: `CB_LCD_SPI_HOST 1` (= `SPI2_HOST`; the skeleton-verifie
   an unknown card. No format/mkfs path exists.
 - `cb_sd_info()` reports FAT total/free **bytes**. Unmount uses
   `esp_vfs_fat_sdcard_unmount()` then `sdmmc_host_deinit()`; only success clears mounted/width.
-  Card presence, capacity, actual width, read/write/verify/delete and fallback all remain
-  **PENDING** until the coordinator supplies a mounted-card capture.
+  Card presence, capacity, actual width, read/write/verify/delete and successful mounted fallback
+  remain **PENDING** until the coordinator supplies a mounted-card capture.
+- **Hardware-observed 2026-11-23**: one direct `cb_sd_init()` produced the 4-bit failure/fallback
+  pair and final timeout, then the example's no-card WARN and `alive #1`. This verifies the degraded
+  mount/error path only: no card answered on either width and the app kept running. It does not
+  prove that the slot was empty or that any mounted operation works. Exact capture and remaining
+  checks are in [verification.md](verification.md) checklist 9.
 
 ## RGB LED
 

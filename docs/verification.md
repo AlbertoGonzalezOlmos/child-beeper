@@ -1,10 +1,11 @@
 # Verification — what is proven, how, and what still needs the board
 
 > Status (updated for item 5): item-4 full gate is **13 pass, 0 fail, 2 skip**, with item-2/3/4
-> serial checks **hardware-verified** as detailed below. Item-5's full gate, root 0.4.0 summary and
-> all SD card checks are **PENDING**; card presence is unknown. Display/LED visuals, button gestures,
-> multimeter accuracy, IMU motion/accuracy/bias calibration and SD mounted I/O remain PENDING
-> (needs human/card). Details and dates follow.
+> serial checks **hardware-verified** as detailed below. Item-5's full gate is **14 pass, 0 fail,
+> 2 skip** and its no-card degraded path is **hardware-verified 2026-11-23**. Root 0.4.0 and all
+> mounted SD operations remain **PENDING**. Display/LED visuals, button gestures, multimeter
+> accuracy, IMU motion/accuracy/bias calibration and mounted SD I/O remain PENDING (needs human/card).
+> Details and dates follow.
 
 This repo distinguishes two levels of proof, and every doc/report must say which one applies:
 
@@ -65,10 +66,13 @@ Rule (also in `AGENTS.md`): *never claim hardware-verified without a board.*
   with approximately 31 °C temperature. Hardware also resolved ADDR_AI as **0x40** and established
   that CTRL9 **0x12** is required; both fixes are in `a05fded`. Exact lines and the still-pending
   motion/accuracy/bias checks are in checklist 8 below.
-- **Item-5 gate/card status**: the full gate and root `cb_bsp=0.4.0` capture are **PENDING**. Card
-  presence is unknown on this bench. No width, capacity, mounted round-trip, clean unmount or 1-bit
-  fallback is claimed yet. **A mount error is not proof that no card exists.** Checklist 9 separates
-  visually confirmed no-card/mount-error behavior from mounted-card evidence.
+- **Item-5 gate/card status**: the full gate on `f8b83c4` completed **14 pass, 0 fail, 2 skip**;
+  app and all five examples built, sdkconfig-assert passed all **six** targets, host tests passed
+  **47**, and CLI tests passed **115**. The root `cb_bsp=0.4.0` capture remains **PENDING**. The
+  2026-11-23 `05_sdcard` capture shows one direct init, timeout on both widths, and a continuing
+  heartbeat: the no-card degraded path is **hardware-verified**. **A mount error is not proof that
+  no card exists.** Mounted width, capacity, round-trip, clean unmount and successful 1-bit fallback
+  remain **PENDING**; exact lines are in checklist 9 below.
 - **Item-3 round-1 agent-side checks (2026-11-23; supplementary, not the full gate)**: with
   `CB_BUILD_ROOT=build/kimi-k31-pro`, `./cb test` passed all **39** host tests (`# failed 0`),
   `./cb verify --fast` completed **7 pass, 0 fail, 7 skip** (109 CLI tests), and
@@ -380,44 +384,54 @@ Procedure per line: run the command, compare with "expected", tick and fill in d
         as expected), full-scale accuracy and **accuracy/bias calibration** remain **PENDING (needs
         human)**. Axis orientation and internal-pull-up signal integrity at 400 kHz also remain
         PENDING even after the serial checks above pass.
-- [ ] 9. (item 5) **TF card over SDMMC — PENDING: card presence is unknown and the coordinator has
-      not supplied a card run. A mount error is not proof that no card exists.**
-      - [ ] **Mount/degraded path** — record `cb_sd: up mount=/sdcard width=%d max_freq_khz=%d` on
-        success, or final `cb_sd: mount failed: %s (no card?)` plus
-        `sdcard: no card or mount failed: %s` and continuing `sdcard: alive #%u`. Without a visual
-        empty-slot note, label this only **mount failed (cause ambiguous)**. With that note, the
-        no-card degraded path may be serial-verified; it is never mounted-I/O PASS. The example
-        may re-probe once after `cb_bsp_init` fails to surface the actual error, but does not keep
-        retrying in the background. No ready, round-trip or success-unmount line is allowed after
-        failed mount.
-      - [ ] **Mounted ready/capacity** — require actual card evidence of
-        `sdcard: ready width=%d mount=/sdcard total_bytes=%llu free_bytes=%llu`; record the winning
-        width and raw-byte values verbatim. A 4-bit success does not prove fallback. If
+- [ ] 9. (item 5) **TF card over SDMMC — no-card degraded path PASS 2026-11-23; mounted path
+      PENDING. A mount error is not proof that no card exists.**
+      - [x] **No-card mount/degraded path — PASS 2026-11-23**: `05_sdcard` made exactly one direct
+        `cb_sd_init()` call (one 4-bit attempt and at most one 1-bit fallback), without calling
+        `cb_bsp_init` at all. The 4-bit attempt timed out, the 1-bit retry timed out, and the
+        example emitted its frozen no-card WARN once, then kept its heartbeat. No ready,
+        round-trip or success-unmount line appeared. The root app separately owns the optional
+        `cb_bsp_init` suppression check. This is evidence of **no card detected on this bench**,
+        not proof of physical slot emptiness or mounted functionality. Capture:
+
+        ```text
+        W (565) cb_sd: 4-bit mount failed: ESP_ERR_TIMEOUT — retrying 1-bit
+        W (595) cb_sd: mount failed: ESP_ERR_TIMEOUT (no card?)
+        W (596) sdcard: no card or mount failed: ESP_ERR_TIMEOUT
+        I (10596) sdcard: alive #1
+        ```
+      - [ ] **Mounted ready/capacity — PENDING (needs a card)**: require
+        `sdcard: ready width=%d mount=/sdcard total_bytes=%llu free_bytes=%llu` and record the
+        negotiated width/raw-byte values verbatim. A 4-bit success would not prove fallback. If
         `cb_sd_info` fails, the example logs `roundtrip failed: %s` and unmounts instead of
         printing ready; that is not a full ready+IO PASS.
-      - [ ] **1-bit fallback, only if exercised** — require
-        `cb_sd: 4-bit mount failed: %s — retrying 1-bit` followed by
-        `cb_sd: up mount=/sdcard width=1 max_freq_khz=20000`. A width-1 line without the preceding
-        failure/fallback evidence is insufficient; an unobserved fallback remains PENDING.
-      - [ ] **Exclusive 4096-byte round-trips** — require three
+      - [ ] **Successful 1-bit mounted fallback — PENDING**: the no-card capture proves the
+        4-bit failure and 1-bit retry occurred, but no `up ... width=1` followed. A mounted fallback
+        PASS requires `cb_sd: 4-bit mount failed: %s — retrying 1-bit` followed by
+        `cb_sd: up mount=/sdcard width=1 max_freq_khz=20000` on a real card.
+      - [ ] **Exclusive 4096-byte round-trips — PENDING (needs a card)**: require three
         `sdcard: roundtrip ok path=/sdcard/cb05_rt%03u.tmp bytes=4096 verified=1 cleanup=deleted`
-        lines, 10 s apart, with actual 000–099 paths. Source review must confirm `O_CREAT | O_EXCL | O_WRONLY`,
-        `(uint8_t)(i * 31 + 7)`, byte-for-byte read-back compare, and `unlink()` only of the newly
-        created path. `cleanup=deleted` is accepted only after successful unlink; no other file is
-        enumerated or touched. Collision, partial-write and unlink-failure paths remain PENDING
-        unless actually exercised.
-      - [ ] **Unmount** — mounted runs end with `cb_sd: unmounted`. On
-        `cb_sd: unmount failed: %s`, the driver keeps mounted=true rather than claiming cleanup;
-        that error path is unverified until injected. `cb_sd_info()` before mount returns
-        `ESP_ERR_INVALID_STATE` with one-shot `cb_sd: not mounted` and untouched outputs.
-      - [ ] **Heartbeat and root regression** — `sdcard: alive #%u` starts around +5 s and repeats
-        around every 5 s by an accumulating deadline, including after polling stops. Fresh `app`
-        boot must show `cb_bsp=0.4.0 init(CB_PART_ALL)=ESP_OK` and continuing
-        `hello_beeper: alive #N`; optional SD failure does not prove SD health.
-      - [ ] **No-format and remaining hardware checks** — source review confirms one mount site
-        with explicit `format_if_mount_failed = false`; no card is intentionally corrupted to test
-        it. Sustained IO, hot removal, internal-pull-up signal integrity, collision/error paths and
-        user-data preservation remain **PENDING (needs card/human)**.
+        lines, 10 s apart, with actual 000–099 paths. Source review confirms
+        `O_CREAT | O_EXCL | O_WRONLY`, `(uint8_t)(i * 31 + 7)`, byte-for-byte read-back compare,
+        and `unlink()` only of the newly created path. `cleanup=deleted` is accepted only after
+        successful unlink; no other file is enumerated or touched. Collision, partial-write and
+        unlink-failure paths remain PENDING unless actually exercised.
+      - [ ] **Unmount — PENDING (needs a mounted card)**: mounted runs must end with
+        `cb_sd: unmounted`. On `cb_sd: unmount failed: %s`, the driver keeps mounted=true rather
+        than claiming cleanup; that error path is unverified until injected. `cb_sd_info()` before
+        mount returns `ESP_ERR_INVALID_STATE` with one-shot `cb_sd: not mounted` and untouched
+        outputs.
+      - [ ] **Heartbeat cadence and root regression — PENDING**: `alive #1` proves liveness after
+        mount failure, not by itself the first-~5 s/repeating-~5 s cadence. Require timestamped
+        intervals before ticking cadence. Fresh `app` boot must show
+        `cb_bsp=0.4.0 init(CB_PART_ALL)=ESP_OK` and continuing `hello_beeper: alive #N`; optional
+        SD failure does not prove SD health.
+      - [x] **No-format code invariant — build/code-verified**: exactly one mount helper/site has
+        explicit `format_if_mount_failed = false`, and the existing forbidden `= true` rule passed
+        in the 14-step gate. This proves the source-level no-auto-format contract without a
+        destructive card test.
+      - [ ] **Remaining hardware checks — PENDING (needs card/human)**: sustained IO, hot removal,
+        internal-pull-up signal integrity, collision/error paths and user-data preservation.
 - [ ] 10. (item 6+) `./cb selftest` → `SELFTEST`/`ITEM:`/`RESULT:` lines, `RESULT` all PASS
       (serial contract frozen in item 6).
 - [ ] 11. (item 7+) One Arduino sketch flashed via `./cb arduino` behaves like its IDF twin;

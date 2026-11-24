@@ -1,6 +1,7 @@
 # BSP API reference (items 1–5 — frozen surface)
 
-> Status: item-5 SD API frozen by SD1–SD14; its full gate, root 0.4.0 capture and card evidence are
+> Status: item-5 SD API frozen by SD1–SD14; its full gate is **14 pass, 0 fail, 2 skip**, and the
+> no-card degraded path is recorded in verification.md. Mounted I/O and the root 0.4.0 capture are
 > PENDING. Item 4 is build-verified (**13 pass, 0 fail, 2 skip**) and its IMU serial capture is
 > recorded in verification.md. Item 3's RGB/button/battery evidence is also recorded there. Only
 > the names on this page are frozen; later self-test APIs require their own review round. Do not
@@ -627,9 +628,10 @@ suitability is a hardware-pending electrical detail; there is no separate SD pul
 On a 4-bit failure the driver logs exactly
 `W cb_sd: 4-bit mount failed: %s — retrying 1-bit`, calls `sdmmc_host_deinit()`, and retries once
 through the same helper with `SDMMC_HOST_FLAG_1BIT | SDMMC_HOST_FLAG_DEINIT_ARG` and slot width 1.
-There is no third width attempt **per `cb_sd_init()` call** and no force-1-bit knob. After a failed
-`cb_bsp_init`, the example may make one explicit re-probe to surface the actual error; it does not
-keep retrying in the background. Success reports the negotiated width from
+There is no third width attempt **per `cb_sd_init()` call** and no force-1-bit knob. The example
+makes exactly one direct `cb_sd_init()` call (one 4-bit attempt and at most one 1-bit fallback),
+owns that call's error for its no-card WARN, and never calls `cb_bsp_init`; the root app separately
+exercises the optional-part suppression path. Success reports the negotiated width from
 `1 << card->log_bus_width`, not merely the requested width, and logs
 `I cb_sd: up mount=/sdcard width=%d max_freq_khz=%d`. If both attempts fail, the actual final error
 is returned with no card pointer, mounted=false and width=0; the first-event-gated line is
@@ -665,10 +667,10 @@ a configured maximum, not a measured clock.
   Success clears card/mounted/width and logs `I cb_sd: unmounted`. An error logs
   `W cb_sd: unmount failed: %s`, returns the IDF error, keeps the mounted state, and does not
   pretend cleanup succeeded. Do not call unmount after a failed mount.
-- Final mount-failure and pre-mount info warnings are one-shot or first-event-allowed, ≤1 Hz gated
-  with race-free state. SD6 requires every repeated WARN, including fallback and unmount retries,
-  to receive equivalent review-verified gating. The driver owns init/transition lines only; the
-  example owns capacity and file-data lines.
+- Final mount failure is first-event-allowed then ≤1 Hz gated, and pre-mount info is one-shot.
+  Fallback and unmount-failure WARNs are also one-shot per failure streak and re-armed by the
+  corresponding successful mount/unmount, all with race-free state. The driver owns init/transition
+  lines only; the example owns capacity and file-data lines.
 
 ### `05_sdcard` serial and round-trip contract (SD10–SD12)
 

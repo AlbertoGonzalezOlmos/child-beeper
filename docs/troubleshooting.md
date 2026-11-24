@@ -1,8 +1,9 @@
 # Troubleshooting & known pitfalls
 
 > Status: item-4 full gate is **13 pass, 0 fail, 2 skip**, with item-2/3/4 serial evidence
-> recorded. Item-5 SDMMC guidance is frozen but its full gate/card evidence is pending. Measured
-> facts come from the vendor demo, this toolchain and dated serial captures, not wiki prose.
+> recorded. Item-5's full gate is **14 pass, 0 fail, 2 skip** and its no-card degraded path is
+> recorded; mounted-card evidence remains pending. Measured facts come from the vendor demo, this
+> toolchain and dated serial captures, not wiki prose.
 > Symptoms marked *(hardware)* can only be confirmed on the board — see [verification.md](verification.md).
 
 ## Why the vendor demo does not build on IDF v6.1 (measured)
