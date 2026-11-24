@@ -1,11 +1,10 @@
-# BSP API reference (items 1–4 — frozen surface)
+# BSP API reference (items 1–5 — frozen surface)
 
-> Status: item-4 API frozen by R9–R13 and R14–R27, with the measured `a05fded` init fixes below;
-> its measured full gate is **13 pass, 0 fail, 2 skip** on the item-4 tip. The 2026-11-23 IMU
-> serial capture is recorded in verification.md; motion response and accuracy/bias calibration
-> remain PENDING. Item 3 is
-> build-verified and its RGB/button/battery serial evidence is recorded in verification.md. Only
-> the names on this page are frozen; the SD driver API still requires its own item review round. Do not invent `cb_*` names ahead of their item.
+> Status: item-5 SD API frozen by SD1–SD14; its full gate, root 0.4.0 capture and card evidence are
+> PENDING. Item 4 is build-verified (**13 pass, 0 fail, 2 skip**) and its IMU serial capture is
+> recorded in verification.md. Item 3's RGB/button/battery evidence is also recorded there. Only
+> the names on this page are frozen; later self-test APIs require their own review round. Do not
+> invent `cb_*` names ahead of their item.
 
 Component: `components/cb_bsp` (local IDF component). Consumers depend on it by path, e.g.
 `examples/<NN>/main/idf_component.yml`:
@@ -25,7 +24,7 @@ Headers are flat: `#include "cb_bsp.h"`, `#include "cb_pins.h"`, … (the compon
 
 ```c
 #define CB_BSP_VERSION_MAJOR 0
-#define CB_BSP_VERSION_MINOR 3
+#define CB_BSP_VERSION_MINOR 4
 #define CB_BSP_VERSION_PATCH 0
 
 typedef enum {
@@ -43,7 +42,7 @@ typedef enum {
 } cb_part_t;
 
 esp_err_t cb_bsp_init(uint32_t parts);   /* inits only the requested parts, in fixed order */
-const char *cb_bsp_version(void);        /* "0.3.0" */
+const char *cb_bsp_version(void);        /* "0.4.0" */
 ```
 
 **Fixed init order:** BACKLIGHT → RGB → I2C → IMU → BUTTON → BATTERY → LCD → LVGL → SD
@@ -535,7 +534,7 @@ The default is `CONFIG_CB_IMU_ODR_120=y`; the driver maps the three symbols to t
 
 - `CB_PART_I2C` maps to `cb_i2c_init` and `CB_PART_IMU` to `cb_imu_init`, in the existing
   I2C-before-IMU positions. Both remain optional/WARN-suppressed; all requested parts are attempted.
-  Only SD remains not implemented.
+  In item 4, SD was the only remaining unimplemented part; item 5 wires it as shown below.
 - `CB_BSP_VERSION_MAJOR/MINOR/PATCH` becomes **0/3/0**, so `cb_bsp_version()` returns `"0.3.0"`.
   Root source remains unchanged. The expected root boot-summary substring is
   `cb_bsp=0.3.0 init(CB_PART_ALL)=ESP_OK` when strict parts succeed.
@@ -574,6 +573,128 @@ alive running. There is no abort or fake no-device PASS.
 Resting acceptance values for the README/coordinator are: max |accel axis| **0.9–1.1 g**, other two
 axes **<0.15 g**, every |gyro component| **<2.00 dps**, and temperature **10–50 °C**. These are
 sanity checks, not full-scale calibration or axis-orientation proof.
+
+## TF card over SDMMC (item 5 — SD1–SD14)
+
+### `cb_sd.h` — mount, state and capacity
+
+```c
+#include "esp_err.h"
+#include <stdbool.h>
+#include <stdint.h>
+esp_err_t cb_sd_init(void);
+esp_err_t cb_sd_unmount(void);              /* idempotent: ESP_OK when nothing is mounted */
+bool cb_sd_mounted(void);
+int cb_sd_bus_width(void);                  /* negotiated 4 or 1; 0 when unmounted */
+const char *cb_sd_mount_point(void);        /* always "/sdcard" */
+esp_err_t cb_sd_info(uint64_t *total_bytes, uint64_t *free_bytes);
+```
+
+These six functions are the whole public surface: no `cb_sd_card()`, `cb_sd_base_path()`,
+`cb_sd_info_t`, format or mkfs API, and no public SDMMC types. `cb_sd_mount_point()` returns the
+frozen literal in every state. `CB_PART_SD` maps to `cb_sd_init` in its existing optional, last
+position; SD mounting remains outside the strict LCD/LVGL path. All nine parts are now implemented,
+and `CB_BSP_VERSION_MAJOR/MINOR/PATCH` is **0/4/0**, so the expected root summary substring is
+`cb_bsp=0.4.0 init(CB_PART_ALL)=ESP_OK` when the strict parts succeed. Optional SD failure is still
+suppressed and is not proof of card health.
+
+### One mount site and no-format invariant (SD3/SD8)
+
+`cb_sd.c` has exactly **one textual** `esp_vfs_fat_sdmmc_mount()` call, inside a width-parameterized
+helper used for both attempts. Its mount configuration is:
+
+```c
+esp_vfs_fat_sdmmc_mount_config_t mount_cfg = {
+    .format_if_mount_failed = false,   /* the only mount site: never format, ever */
+    .max_files = 5,
+    .allocation_unit_size = 16 * 1024,
+};
+```
+
+The explicit false field and single call site are code-review invariants documented here and in
+verification.md. The existing forbidden `format_if_mount_failed = true` audit remains the only
+machine rule; no new static scan is added. A failed mount returns an error and never formats,
+partitions, or aborts.
+
+The host starts as `SDMMC_HOST_DEFAULT()` with `host.slot = SDMMC_HOST_SLOT_1`,
+`host.max_freq_khz = CONFIG_CB_SD_MAX_FREQ_KHZ` (default **20000**), and initial flags
+`SDMMC_HOST_FLAG_4BIT | SDMMC_HOST_FLAG_DEINIT_ARG`. `DEINIT_ARG` is required because the default
+union supplies `.deinit_p`. The slot starts as `SDMMC_SLOT_CONFIG_DEFAULT()` but overrides the
+ESP32-S3 defaults with CLK14, CMD15, D0=16, D1=18, D2=17, D3=21, no card-detect or write-protect,
+width 4, and `SDMMC_SLOT_FLAG_INTERNAL_PULLUP` (the exact IDF 6.1 spelling). Internal pull-up
+suitability is a hardware-pending electrical detail; there is no separate SD pull-up log line.
+
+On a 4-bit failure the driver logs exactly
+`W cb_sd: 4-bit mount failed: %s — retrying 1-bit`, calls `sdmmc_host_deinit()`, and retries once
+through the same helper with `SDMMC_HOST_FLAG_1BIT | SDMMC_HOST_FLAG_DEINIT_ARG` and slot width 1.
+There is no third width attempt **per `cb_sd_init()` call** and no force-1-bit knob. After a failed
+`cb_bsp_init`, the example may make one explicit re-probe to surface the actual error; it does not
+keep retrying in the background. Success reports the negotiated width from
+`1 << card->log_bus_width`, not merely the requested width, and logs
+`I cb_sd: up mount=/sdcard width=%d max_freq_khz=%d`. If both attempts fail, the actual final error
+is returned with no card pointer, mounted=false and width=0; the first-event-gated line is
+`W cb_sd: mount failed: %s (no card?)`. **A mount error is not proof that no card exists.**
+
+The only item-5 Kconfig addition is:
+
+```kconfig
+config CB_SD_MAX_FREQ_KHZ
+    int "SDMMC maximum clock frequency (kHz)"
+    range 400 40000
+    default 20000
+```
+
+There is no frequency macro in `cb_pins.h` and no format/timeout/force-width knob. The frequency is
+a configured maximum, not a measured clock.
+
+### State, info, unmount and locking semantics
+
+- `cb_sd_init()` is idempotent: a mounted card returns `ESP_OK` and logs
+  `I cb_sd: already initialized`. Failed init leaves mounted=false and width=0 so a later call can
+  retry with fresh host/slot state.
+- `cb_sd_mounted()` and `cb_sd_bus_width()` are silent getters. Mounted/width snapshots are
+  published and read under a `portMUX_TYPE` critical section so the pair cannot tear. No mutex is
+  held across the blocking mount or unmount calls.
+- `cb_sd_info()` uses `esp_vfs_fat_info("/sdcard", &total, &free)` and reports raw **bytes**, not
+  KiB/MiB. NULL either output returns `ESP_ERR_INVALID_ARG`; unmounted returns
+  `ESP_ERR_INVALID_STATE` with one-shot gated `W cb_sd: not mounted`. Outputs are untouched on both
+  errors. Capacity/free values are snapshots, not constants. Both outputs are assigned together
+  only after `esp_vfs_fat_info` succeeds, so they remain untouched on every error.
+- `cb_sd_unmount()` is idempotent and requires callers to close their files first. For a mounted
+  card it calls `esp_vfs_fat_sdcard_unmount("/sdcard", s_card)` and then `sdmmc_host_deinit()`.
+  Success clears card/mounted/width and logs `I cb_sd: unmounted`. An error logs
+  `W cb_sd: unmount failed: %s`, returns the IDF error, keeps the mounted state, and does not
+  pretend cleanup succeeded. Do not call unmount after a failed mount.
+- Final mount-failure and pre-mount info warnings are one-shot or first-event-allowed, ≤1 Hz gated
+  with race-free state. SD6 requires every repeated WARN, including fallback and unmount retries,
+  to receive equivalent review-verified gating. The driver owns init/transition lines only; the
+  example owns capacity and file-data lines.
+
+### `05_sdcard` serial and round-trip contract (SD10–SD12)
+
+After mount and successful info, the example prints once:
+
+```text
+I sdcard: ready width=%d mount=%s total_bytes=%llu free_bytes=%llu
+```
+
+The round-trip uses `/sdcard/cb05_rt%03u.tmp`, starting at 000 and incrementing on `EEXIST` through
+099. It opens with `O_CREAT | O_EXCL | O_WRONLY`, so an existing file is never truncated or reused.
+Each of **three rounds, 10 s apart**, writes **4096 bytes** of `(uint8_t)(i * 31 + 7)`, reads them
+back, and compares byte-for-byte. Only the newly created path is unlinked; the example never
+enumerates or touches other files. A successful compare and successful unlink produce exactly:
+
+```text
+I sdcard: roundtrip ok path=%s bytes=4096 verified=1 cleanup=deleted
+```
+
+`cleanup=deleted` is never printed when unlink fails. Three successful rounds are followed by one
+unmount. `W sdcard: roundtrip failed: %s` is one-shot, then polling stops. `I sdcard: alive #%u` starts at about +5 s and repeats about every 5 s using an
+**accumulating** deadline (`next_alive_us += PERIOD`), including after polling stops. When the part
+cannot be brought up, the example emits `W sdcard: no card or mount failed: %s` once and continues
+heartbeat-only operation. The successful unmount line belongs to the driver (`cb_sd: unmounted`),
+not a duplicate example line. Card presence is unknown on this bench: ready/mounted I/O and fallback
+evidence remain PENDING unless the coordinator captures them.
 
 ## Threading / LVGL rules
 

@@ -1,10 +1,9 @@
 # Troubleshooting & known pitfalls
 
-> Status: item 3 build-verified (12 pass, 0 fail, 2 skip on 2026-11-23), with item-2 display and
-> item-3 `cb_bsp=0.2.0`, RGB cap, button-poller and calibrated-battery serial evidence. Item-4's
-> measured full gate is **13 pass, 0 fail, 2 skip**; its 2026-11-23 IMU serial result is recorded. Measured
-> facts come from the vendor demo, this toolchain and dated serial captures, not wiki prose. Symptoms
-> marked *(hardware)* can only be confirmed on the board — see [verification.md](verification.md).
+> Status: item-4 full gate is **13 pass, 0 fail, 2 skip**, with item-2/3/4 serial evidence
+> recorded. Item-5 SDMMC guidance is frozen but its full gate/card evidence is pending. Measured
+> facts come from the vendor demo, this toolchain and dated serial captures, not wiki prose.
+> Symptoms marked *(hardware)* can only be confirmed on the board — see [verification.md](verification.md).
 
 ## Why the vendor demo does not build on IDF v6.1 (measured)
 
@@ -144,6 +143,39 @@ to make these visible at a glance on hardware day.
   (per-agent `-DSDKCONFIG` + repo `flock` at `<build_root>/.cb.lock`).
 - Never delete/edit another agent's `build/<name>/` tree; use your own `CB_BUILD_ROOT`.
 - Disk: each LVGL build dir is a few hundred MB — `./cb clean` when idle.
+
+## Item-5 TF card over SDMMC
+
+- **SDMMC config does not compile**: use IDF 6.1's `SDMMC_HOST_DEFAULT()` /
+  `SDMMC_SLOT_CONFIG_DEFAULT()`, `host.max_freq_khz` (not `max_freq_hz`),
+  `SDMMC_SLOT_FLAG_INTERNAL_PULLUP` (not `INTERNAL_PULL_UP`), and
+  `SDMMC_HOST_FLAG_4BIT | SDMMC_HOST_FLAG_DEINIT_ARG`. The S3 slot defaults have the wrong data pins
+  for this board: override D0=16, D1=18, D2=17, D3=21 in addition to CLK14/CMD15. Keep
+  `DEINIT_ARG` when selecting `SDMMC_HOST_FLAG_1BIT` for fallback.
+- **Mount fails, or there may be no card**: this board has no card-detect or write-protect line.
+  **A mount error is not proof that no card exists.** Preserve the actual IDF error and use the
+  hedged `mount failed: %s (no card?)` driver line and `no card or mount failed: %s` example line.
+  Only a visual empty-slot note turns that into physical no-card evidence; an unreadable/non-FAT
+  card is never formatted to make the test pass.
+- **4-bit works but fallback was not exercised**: fallback is not a failure. It happens only after
+  a 4-bit error, logged as `4-bit mount failed: %s — retrying 1-bit`, followed by
+  `sdmmc_host_deinit()` and one retry with 1-bit host/slot flags. A 1-bit up line counts as
+  fallback evidence only with those preceding lines; do not expect them after a 4-bit success.
+- **No auto-format check**: `cb_sd.c` has exactly one textual `esp_vfs_fat_sdmmc_mount()` inside a
+  width helper, with explicit `format_if_mount_failed = false`, `max_files = 5`, and
+  `allocation_unit_size = 16 * 1024`. Review that invariant directly; the existing forbidden
+  `format_if_mount_failed = true` rule is the only static scan.
+- **Info/unmount confusion**: `cb_sd_info()` returns raw bytes. NULL outputs are
+  `ESP_ERR_INVALID_ARG`; unmounted is `ESP_ERR_INVALID_STATE` with one-shot `cb_sd: not mounted`,
+  and outputs stay untouched. Close files before `cb_sd_unmount()`. It calls
+  `esp_vfs_fat_sdcard_unmount()` then `sdmmc_host_deinit()`; only success clears mounted/width.
+  `unmount failed: %s` keeps the mounted state instead of claiming cleanup.
+- **Round-trip would clobber a file or leave residue**: start `/sdcard/cb05_rt000.tmp` and bump
+  through 099 only on `EEXIST`, using `O_CREAT | O_EXCL | O_WRONLY`. Never enumerate or truncate a
+  user's file. Each of three rounds, 10 s apart, compares all 4096 bytes of
+  `(uint8_t)(i * 31 + 7)`, then unlinks only the newly created path. `cleanup=deleted` is printed
+  only after unlink succeeds; `roundtrip failed: %s` is one-shot and stops polling while the
+  accumulating ~5 s alive line continues.
 
 ## Item-4 I2C and QMI8658
 

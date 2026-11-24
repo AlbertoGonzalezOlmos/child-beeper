@@ -1,12 +1,10 @@
 # Verification — what is proven, how, and what still needs the board
 
-> Status (updated for item 4): item 3 is **build-verified** (12 pass, 0 fail, 2 skip), with
-> item-2 display and item-3 `cb_bsp=0.2.0`, RGB cap, button-poller and calibrated-battery serial
-> checks **hardware-verified**. Item-4's `04_imu` serial half is **hardware-verified 2026-11-23**;
-> its full gate is **13 pass, 0 fail, 2 skip**; only the root 0.3.0 capture remains **PENDING**.
-> Display/LED visuals, button
-> gestures, multimeter accuracy and IMU motion response/accuracy/bias calibration remain PENDING
-> (needs human). Details and dates follow.
+> Status (updated for item 5): item-4 full gate is **13 pass, 0 fail, 2 skip**, with item-2/3/4
+> serial checks **hardware-verified** as detailed below. Item-5's full gate, root 0.4.0 summary and
+> all SD card checks are **PENDING**; card presence is unknown. Display/LED visuals, button gestures,
+> multimeter accuracy, IMU motion/accuracy/bias calibration and SD mounted I/O remain PENDING
+> (needs human/card). Details and dates follow.
 
 This repo distinguishes two levels of proof, and every doc/report must say which one applies:
 
@@ -67,6 +65,10 @@ Rule (also in `AGENTS.md`): *never claim hardware-verified without a board.*
   with approximately 31 °C temperature. Hardware also resolved ADDR_AI as **0x40** and established
   that CTRL9 **0x12** is required; both fixes are in `a05fded`. Exact lines and the still-pending
   motion/accuracy/bias checks are in checklist 8 below.
+- **Item-5 gate/card status**: the full gate and root `cb_bsp=0.4.0` capture are **PENDING**. Card
+  presence is unknown on this bench. No width, capacity, mounted round-trip, clean unmount or 1-bit
+  fallback is claimed yet. **A mount error is not proof that no card exists.** Checklist 9 separates
+  visually confirmed no-card/mount-error behavior from mounted-card evidence.
 - **Item-3 round-1 agent-side checks (2026-11-23; supplementary, not the full gate)**: with
   `CB_BUILD_ROOT=build/kimi-k31-pro`, `./cb test` passed all **39** host tests (`# failed 0`),
   `./cb verify --fast` completed **7 pass, 0 fail, 7 skip** (109 CLI tests), and
@@ -132,10 +134,14 @@ Steps run in a **fixed order** with **stable ids**; each prints `[PASS]/[FAIL]/[
    `test_imu_math_decode_int16_min` (0x8000 decodes to exact negative range without signed
    negation/UB). Existing helper tests also cover temp 0xFF80→-0.5 and full-scale
    +32767→range*32767/32768 rather than +range.
+   Item 5 adds **no new host tests**: `cb_sd.c` is IDF-only SDMMC/VFS/FATFS glue and IDF stubs are
+   forbidden (SD9/R11b). No pure helper is introduced. The existing **47** tests, including all six
+   SD pin values and GPIO uniqueness, remain the host regression suite; mount, fallback, VFS info,
+   unmount and file IO require source review plus real-card evidence, not mocked host success.
 3. `cli-tests` — the CLI's own unit tests:
    `python3 -m unittest discover -s tools/tests -t . -q` (a missing `tools/tests/` is a FAIL,
-   owner deepseek-flash). The current item-4 suite has **112 tests**, including the added required
-   target and five-lock fixtures.
+   owner deepseek-flash). Item 4's suite had **112 tests**. Item 5 adds one missing-lock test and
+   two required-target negatives (full + fast), making the current suite **115 tests**.
 4. `pin-drift` — byte-compares Arduino copies of the shared headers against
    `components/cb_bsp/include/`. **SKIP while `arduino/` is absent.**
 5. `audit-static` — forbidden constructs + absolute-path scan (scope below).
@@ -143,13 +149,14 @@ Steps run in a **fixed order** with **stable ids**; each prints `[PASS]/[FAIL]/[
    **esp_lvgl_port 2.9.0**, **led_strip 3.1.1**, **idf 6.1.0**, and
    `components/cb_bsp/idf_component.yml` must pin those three exactly (no `^`/`~`/`>=` ranges).
    A missing/stale lock FAILs with a `./cb deps` hint — run `./cb deps` once after any
-   manifest/lock change (ruling A9). Item 4 has five project locks: root, `01_lcd_hello`,
-   `02_rgb_button`, `03_battery`, and `04_imu`. Each example lock is committed by the example owner
-   after its first successful build; dependency versions themselves do not change.
+   manifest/lock change (ruling A9). Item 5 has six project locks: root, `01_lcd_hello`,
+   `02_rgb_button`, `03_battery`, `04_imu`, and `05_sdcard`. Each example lock is committed by the
+   example owner after its first successful build; dependency versions themselves do not change.
 7. `build:app` — builds the root app (`main/` "hello beeper").
 8. `build:<example>` — one step per `examples/*`. Item 3 adds required steps
-   `build:02_rgb_button` and `build:03_battery` after `build:01_lcd_hello`; item 4 adds the required
-   `build:04_imu` step.
+   `build:02_rgb_button` and `build:03_battery` after `build:01_lcd_hello`; item 4 adds
+   `build:04_imu`, and item 5 adds required `build:05_sdcard` with the same missing-target FAIL
+   semantics in full and fast modes.
 9. `sdkconfig-assert` — per built target: OCT PSRAM, PSRAM 80 M, 16 MB flash, USB-Serial/JTAG
    console, custom partition table; plus the built partition binary exists and the table contains
    `factory,app,factory,0x10000,3M` and `storage,data,fat,0x310000,0x800000`.
@@ -159,7 +166,7 @@ Steps run in a **fixed order** with **stable ids**; each prints `[PASS]/[FAIL]/[
    `CONFIG_LV_FONT_DEFAULT_MONTSERRAT_14=y`, `CONFIG_LV_FONT_MONTSERRAT_14=y`,
    `CONFIG_LV_USE_LABEL=y`, `CONFIG_LV_USE_IMAGE=y`; and **forbids** `CONFIG_LV_CONF_MINIMAL=y`.
    Absence of any `CONFIG_LV_` config in those two targets is a **FAIL, not a skip**. For every
-   other target, including 02/03/04, the same eight keys are checked **whenever any `CONFIG_LV_*`
+   other target, including 02/03/04/05, the same eight keys are checked **whenever any `CONFIG_LV_*`
    entry is present**; cb_bsp's manifest normally makes them present even though those examples
    do not call LVGL. (`CONFIG_LV_OS_NONE=y` is deliberate: esp_lvgl_port owns the LVGL task;
    demanding an `LV_OS_FREERTOS`-style setting would fail a correct build.)
@@ -171,15 +178,15 @@ Steps run in a **fixed order** with **stable ids**; each prints `[PASS]/[FAIL]/[
     durations, app sizes via `idf.py size --format json` when it succeeds, `.bin`-size fallback
     otherwise). `./cb report` prints the markdown.
 
-**Item-1 strictness + item-3 R9b + item-4 R25:** `tests/host/Makefile`, `build:app`,
-`build:01_lcd_hello`, `build:02_rgb_button`, `build:03_battery`, and `build:04_imu` are *required*
-— missing files make those steps **FAIL**, not SKIP, even in `--fast` mode. The full and fast
-missing-04 tests both require detail `examples/04_imu missing (CMakeLists.txt not found)`. SKIP is
-legitimate only for `pin-drift`, `arduino:*` (no `arduino/` tree yet), build and dependent
-`sdkconfig-assert` steps deliberately skipped by `--fast`, and `--offline` sub-checks when
-`unshare` is unavailable. With all item-4 projects
-present, a normal full gate still has the two expected Arduino-related SKIPs; sdkconfig-assert
-covers **five** targets (app + four examples).
+**Item-1 strictness + item-3 R9b + item-4 R25 + item-5 SD13:** `tests/host/Makefile`, `build:app`,
+`build:01_lcd_hello`, `build:02_rgb_button`, `build:03_battery`, `build:04_imu`, and
+`build:05_sdcard` are *required* — missing files make those steps **FAIL**, not SKIP, even in
+`--fast` mode. Full and fast missing-05 tests both require detail
+`examples/05_sdcard missing (CMakeLists.txt not found)`. SKIP is legitimate only for `pin-drift`,
+`arduino:*` (no `arduino/` tree yet), build and dependent `sdkconfig-assert` steps deliberately
+skipped by `--fast`, and `--offline` sub-checks when `unshare` is unavailable. With all item-5
+projects present, a normal full gate still has the two expected Arduino-related SKIPs;
+sdkconfig-assert covers **six** targets (app + five examples).
 
 **Exit codes:** a FAIL in `doctor` → **3**; any other FAIL → **1**; all PASS/SKIP → **0**.
 (Globally: 0 ok, 1 build/test failure, 2 board/port absent, 3 usage/environment.)
@@ -209,7 +216,9 @@ are all present in the local caches — see [troubleshooting.md](troubleshooting
 - Forbidden constructs (live in `tools/cbchecks/`): `driver/i2c.h`, `lcd_color_rgb_endian_t`,
   `LCD_RGB_ENDIAN_`, `lv_disp_drv_t`, `lv_disp_draw_buf_t`, `lv_scr_act(`, `ledcSetup(`,
   `ledcAttachPin(`, `neopixelWrite(`, `format_if_mount_failed = true`, and `ESP_ERROR_CHECK(`
-  inside `cb_bsp` on optional hardware.
+  inside `cb_bsp` on optional hardware. Item 5 adds no scan. Independently, code review must see
+  exactly one textual `esp_vfs_fat_sdmmc_mount()` in `cb_sd.c` and its explicit
+  `format_if_mount_failed = false`; that single-site/no-format invariant is not a new machine rule.
 
 ## What `./cb verify` does **not** prove
 
@@ -371,8 +380,44 @@ Procedure per line: run the command, compare with "expected", tick and fill in d
         as expected), full-scale accuracy and **accuracy/bias calibration** remain **PENDING (needs
         human)**. Axis orientation and internal-pull-up signal integrity at 400 kHz also remain
         PENDING even after the serial checks above pass.
-- [ ] 9. (item 5+) SD: mount logs the bus width used (4-bit, or 1-bit fallback); write/read
-      round-trip passes; **no card is ever auto-formatted**.
+- [ ] 9. (item 5) **TF card over SDMMC — PENDING: card presence is unknown and the coordinator has
+      not supplied a card run. A mount error is not proof that no card exists.**
+      - [ ] **Mount/degraded path** — record `cb_sd: up mount=/sdcard width=%d max_freq_khz=%d` on
+        success, or final `cb_sd: mount failed: %s (no card?)` plus
+        `sdcard: no card or mount failed: %s` and continuing `sdcard: alive #%u`. Without a visual
+        empty-slot note, label this only **mount failed (cause ambiguous)**. With that note, the
+        no-card degraded path may be serial-verified; it is never mounted-I/O PASS. The example
+        may re-probe once after `cb_bsp_init` fails to surface the actual error, but does not keep
+        retrying in the background. No ready, round-trip or success-unmount line is allowed after
+        failed mount.
+      - [ ] **Mounted ready/capacity** — require actual card evidence of
+        `sdcard: ready width=%d mount=/sdcard total_bytes=%llu free_bytes=%llu`; record the winning
+        width and raw-byte values verbatim. A 4-bit success does not prove fallback. If
+        `cb_sd_info` fails, the example logs `roundtrip failed: %s` and unmounts instead of
+        printing ready; that is not a full ready+IO PASS.
+      - [ ] **1-bit fallback, only if exercised** — require
+        `cb_sd: 4-bit mount failed: %s — retrying 1-bit` followed by
+        `cb_sd: up mount=/sdcard width=1 max_freq_khz=20000`. A width-1 line without the preceding
+        failure/fallback evidence is insufficient; an unobserved fallback remains PENDING.
+      - [ ] **Exclusive 4096-byte round-trips** — require three
+        `sdcard: roundtrip ok path=/sdcard/cb05_rt%03u.tmp bytes=4096 verified=1 cleanup=deleted`
+        lines, 10 s apart, with actual 000–099 paths. Source review must confirm `O_CREAT | O_EXCL | O_WRONLY`,
+        `(uint8_t)(i * 31 + 7)`, byte-for-byte read-back compare, and `unlink()` only of the newly
+        created path. `cleanup=deleted` is accepted only after successful unlink; no other file is
+        enumerated or touched. Collision, partial-write and unlink-failure paths remain PENDING
+        unless actually exercised.
+      - [ ] **Unmount** — mounted runs end with `cb_sd: unmounted`. On
+        `cb_sd: unmount failed: %s`, the driver keeps mounted=true rather than claiming cleanup;
+        that error path is unverified until injected. `cb_sd_info()` before mount returns
+        `ESP_ERR_INVALID_STATE` with one-shot `cb_sd: not mounted` and untouched outputs.
+      - [ ] **Heartbeat and root regression** — `sdcard: alive #%u` starts around +5 s and repeats
+        around every 5 s by an accumulating deadline, including after polling stops. Fresh `app`
+        boot must show `cb_bsp=0.4.0 init(CB_PART_ALL)=ESP_OK` and continuing
+        `hello_beeper: alive #N`; optional SD failure does not prove SD health.
+      - [ ] **No-format and remaining hardware checks** — source review confirms one mount site
+        with explicit `format_if_mount_failed = false`; no card is intentionally corrupted to test
+        it. Sustained IO, hot removal, internal-pull-up signal integrity, collision/error paths and
+        user-data preservation remain **PENDING (needs card/human)**.
 - [ ] 10. (item 6+) `./cb selftest` → `SELFTEST`/`ITEM:`/`RESULT:` lines, `RESULT` all PASS
       (serial contract frozen in item 6).
 - [ ] 11. (item 7+) One Arduino sketch flashed via `./cb arduino` behaves like its IDF twin;
