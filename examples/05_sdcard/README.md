@@ -9,6 +9,12 @@ cleanly and keeps a 5 s `alive` heartbeat forever — including in every degrade
 It exists as a copy-paste template and as the hardware evidence source for the SD
 peripheral (docs/verification.md checklist 9 greps this example's serial).
 
+**Init path (deliberate):** the example drives the driver directly — one
+`cb_sd_init()` call, exactly **one** mount attempt — so it owns the mount error
+code printed in the frozen `no card or mount failed: %s` line. The BSP-wide init
+path (`cb_bsp_init`, optional-part suppression) is exercised by the root app,
+not here.
+
 ## Wiring (frozen in `components/cb_bsp/include/cb_pins.h`)
 
 | Signal | GPIO | | Signal | GPIO |
@@ -100,11 +106,12 @@ grep -E  '\) sdcard: (roundtrip failed|no card)'                                
 A `W (…) cb_sd: 4-bit mount failed: … — retrying 1-bit` before `up … width=1` is a
 PASS for the 1-bit fallback path — record it verbatim.
 
-Scenario B (no card / unmountable card):
+Scenario B (no card / unmountable card) — exactly ONE mount attempt:
 ```bash
 grep -cE '\) sdcard: no card or mount failed: '                                             # 1
 grep -cE '\) sdcard: (ready|roundtrip)'                                                     # EMPTY
-grep -c 'cb_bsp: SD: init failed (optional, suppressed):'                                   # 1
+grep -cE '\) cb_sd: 4-bit mount failed: '                                                   # 1
+grep -cE '\) cb_sd: mount failed: '                                                         # 1
 grep -E  '\) sdcard: alive #'                 # keeps increasing
 ```
 

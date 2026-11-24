@@ -2,11 +2,15 @@
  * 05_sdcard — TF card over SDMMC diagnostic example (toolkit item 5).
  *
  * Exercises the optional cb_sd part (SDMMC slot 1, 4-bit with the driver's
- * logged 1-bit fallback, FAT mounted at the frozen "/sdcard" mount point)
- * through cb_bsp. Each round writes a 4 KB file with the deterministic SD11
- * pattern, reads it back, verifies it byte-for-byte and deletes exactly the
- * file it created: 3 rounds 10 s apart, then a clean unmount. The 5 s alive
- * heartbeat keeps running in every degraded mode and never stops.
+ * logged 1-bit fallback, FAT mounted at the frozen "/sdcard" mount point).
+ * The example drives cb_sd directly and deliberately (item-5 capture
+ * ruling): exactly ONE mount attempt, and it owns the mount error code for
+ * the frozen no-card WARN below. The BSP-wide init path (cb_bsp_init,
+ * optional-part suppression) is exercised by the root app, not here. Each
+ * round writes a 4 KB file with the deterministic SD11 pattern, reads it
+ * back, verifies it byte-for-byte and deletes exactly the file it created:
+ * 3 rounds 10 s apart, then a clean unmount. The 5 s alive heartbeat keeps
+ * running in every degraded mode and never stops.
  *
  * Serial contract (frozen strings, R23/SD10 — also quoted in README.md):
  *   I (…) sdcard: ready width=%d mount=%s total_bytes=%llu free_bytes=%llu
@@ -38,7 +42,6 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 
-#include "cb_bsp.h"
 #include "cb_sd.h"
 
 static const char *TAG = "sdcard";
@@ -155,22 +158,15 @@ static esp_err_t roundtrip_once(const char **cause)
 
 void app_main(void)
 {
-    /* SD is an optional part: cb_bsp_init suppresses a failed mount with its
-     * own WARN (R20) and returns ESP_OK. A missing card is normal on this
-     * USB-only board — never abort (SD4). */
-    (void)cb_bsp_init(CB_PART_SD);
-
     for (size_t i = 0; i < RT_LEN; ++i) {
         s_wbuf[i] = (uint8_t)(i * 31 + 7);   /* SD11: deterministic pattern */
     }
 
-    esp_err_t err = ESP_OK;
-    if (!cb_sd_mounted()) {
-        /* cb_bsp suppressed the mount error, and SD10's frozen WARN wants
-         * it: one public-API re-probe surfaces it (a retry after a failed
-         * mount is allowed and may recover a flaky card). */
-        err = cb_sd_init();
-    }
+    /* RULING after the item-5 hardware capture: a diagnostic example makes
+     * exactly ONE mount attempt, so it drives cb_sd directly (no cb_bsp_init
+     * call at all) and owns the mount error code for the frozen WARN below.
+     * A missing card is normal on this USB-only board — never abort (SD4). */
+    esp_err_t err = cb_sd_init();
 
     bool rt_enabled = false;
     if (cb_sd_mounted()) {
