@@ -14,8 +14,8 @@
  *   - cb_bsp_init(0) == ESP_OK; every requested part is attempted even after
  *     a failure.
  *
- * Items 2..5 replace the NULL entries in k_parts[] with their init functions
- * and append their sources to CMakeLists.txt (SRCS) via the review round.
+ * Items 2..5 replaced the NULL entries in k_parts[] with their init
+ * functions (item 5 = SD last); after item 5 no part is "not implemented".
  */
 #include "cb_bsp.h"
 
@@ -29,6 +29,7 @@
 #include "cb_imu.h"
 #include "cb_lcd.h"
 #include "cb_rgb.h"
+#include "cb_sd.h"
 #include "esp_log.h"
 
 static const char *TAG = "cb_bsp";
@@ -52,7 +53,7 @@ static const cb_part_desc_t k_parts[] = {
     { "BATTERY",   CB_PART_BATTERY,   false, cb_battery_init },
     { "LCD",       CB_PART_LCD,       true,  cb_lcd_init },
     { "LVGL",      CB_PART_LVGL,      true,  cb_lcd_init_lvgl },
-    { "SD",        CB_PART_SD,        false, NULL },
+    { "SD",        CB_PART_SD,        false, cb_sd_init },
 };
 
 /* Item-2 idempotency ruling: parts that returned ESP_OK are marked here and
