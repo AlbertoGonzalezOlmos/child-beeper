@@ -48,6 +48,15 @@ static const char *TAG = "sdcard";
 
 #define LOOP_PERIOD_MS   5000          /* loop tick */
 #define ALIVE_PERIOD_US  5000000LL     /* heartbeat every 5 s (accumulating) */
+
+/* One FreeRTOS tick in µs. vTaskDelay(n) unblocks at a tick boundary, i.e. up
+ * to one tick BEFORE n ms of real time have elapsed, while the work between
+ * seeding and delaying is only microseconds — so an alive deadline seeded at
+ * exactly +ALIVE_PERIOD_US can lose the `>=` race and push `alive #1` to ~10 s
+ * (item-5 capture: init 596 ms, alive #1 10596 ms). Biasing the accumulating
+ * alive deadlines one tick early keeps the frozen "first at ~5 s, then every
+ * ~5 s" contract true. */
+#define ONE_TICK_US      (1000000 / CONFIG_FREERTOS_HZ)
 #define RT_PERIOD_US    10000000LL     /* one round-trip every 10 s */
 #define RT_ROUNDS       3              /* round-trips before the clean unmount */
 #define RT_LEN          4096           /* bytes per round-trip (SD11) */
@@ -190,7 +199,7 @@ void app_main(void)
     unsigned alive = 0;
     unsigned rt_done = 0;
     int64_t now_us = esp_timer_get_time();
-    int64_t next_alive_us = now_us + ALIVE_PERIOD_US;   /* first alive at +5 s */
+    int64_t next_alive_us = now_us + ALIVE_PERIOD_US - ONE_TICK_US;  /* ~5 s, one-tick bias */
     int64_t next_rt_us = now_us;                        /* first round-trip now */
 
     for (;;) {
