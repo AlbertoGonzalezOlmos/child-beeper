@@ -1,11 +1,10 @@
 # Hardware reference — Waveshare ESP32-S3-LCD-1.47B
 
-> Status (updated for item 4): chip identity, flash size, PSRAM presence, console and app boot are
-> **hardware-verified**. Item-2 display and item-3 `cb_bsp=0.2.0`, RGB, button and calibrated
-> battery serial checks are also recorded. Item-4 I2C/IMU configuration and stable samples were
-> serial-observed on 2026-11-23; motion response, accuracy/bias calibration and pull-up electrical
-> quality remain PENDING. Pin values mirror `components/cb_bsp/include/cb_pins.h`; measurements
-> live in [verification.md](verification.md).
+> Status (updated for item 5): chip identity, flash size, PSRAM presence, console and app boot are
+> **hardware-verified**. Item-2 display, item-3 RGB/button/battery and item-4 IMU serial checks are
+> also recorded. Item-5's no-card degraded path was serial-observed on 2026-11-23; mounted I/O and
+> successful fallback remain PENDING. A mount error is not proof of physical card absence. Pin values
+> mirror `components/cb_bsp/include/cb_pins.h`; measurements live in [verification.md](verification.md).
 
 ## Board / SoC
 
@@ -167,13 +166,34 @@ Other frozen constants: `CB_LCD_SPI_HOST 1` (= `SPI2_HOST`; the skeleton-verifie
 
 ## TF card (SDMMC)
 
-- Pins as tabled; **no card-detect and no write-protect lines** — software cannot always
-  distinguish "no card" from a mount error.
-- Item 5 drives it 4-bit @ 20 MHz with automatic **1-bit fallback** (logged). The vendor demo
-  shipped 1-bit although all four data lines are wired; internal pull-ups only (the vendor comments
-  note external 10 k pull-ups are recommended for reliability — hardware-day item).
-- **`format_if_mount_failed` is always false.** No code path may silently format a card (enforced by
-  `audit-static`).
+- Pins as tabled; **no card-detect and no write-protect lines** — software cannot distinguish a
+  missing card from an unreadable/non-FAT card, poor contact, width mismatch or another mount error.
+  **A mount error is not proof that no card exists.**
+- The item-5 first attempt is 4-bit at a **configured maximum** of 20 MHz
+  (`CB_SD_MAX_FREQ_KHZ=20000`), using SDMMC slot 1, the six frozen pins and
+  `SDMMC_HOST_FLAG_4BIT | SDMMC_HOST_FLAG_DEINIT_ARG`. `max_freq_khz` is not a measured clock.
+- The slot overrides the IDF ESP32-S3 default pins, has width 4 and
+  `SDMMC_SLOT_FLAG_INTERNAL_PULLUP` (exact IDF 6.1 name), with no CD/WP. Internal pull-ups only;
+  external 10 k pull-ups are vendor-recommended for reliability, so signal integrity remains a
+  hardware-day check. There is no separate SD pull-up serial line.
+- On failure the driver logs `4-bit mount failed: %s — retrying 1-bit`, calls
+  `sdmmc_host_deinit()`, and retries once with `SDMMC_HOST_FLAG_1BIT | SDMMC_HOST_FLAG_DEINIT_ARG`
+  and slot width 1. A successful line reports the negotiated width from `log_bus_width`. A 4-bit
+  success leaves fallback unverified; a 1-bit success is valid fallback evidence only with the
+  preceding failure/fallback log.
+- Exactly one mount helper/site has `format_if_mount_failed = false`, `max_files = 5`, and
+  `allocation_unit_size = 16 * 1024`. This is a source-review invariant backed by the existing
+  `format_if_mount_failed = true` forbidden-construct audit, not permission to test formatting on
+  an unknown card. No format/mkfs path exists.
+- `cb_sd_info()` reports FAT total/free **bytes**. Unmount uses
+  `esp_vfs_fat_sdcard_unmount()` then `sdmmc_host_deinit()`; only success clears mounted/width.
+  Card presence, capacity, actual width, read/write/verify/delete and successful mounted fallback
+  remain **PENDING** until the coordinator supplies a mounted-card capture.
+- **Hardware-observed 2026-11-23**: one direct `cb_sd_init()` produced the 4-bit failure/fallback
+  pair and final timeout, then the example's no-card WARN and `alive #1`. This verifies the degraded
+  mount/error path only: no card answered on either width and the app kept running. It does not
+  prove that the slot was empty or that any mounted operation works. Exact capture and remaining
+  checks are in [verification.md](verification.md) checklist 9.
 
 ## RGB LED
 
