@@ -44,6 +44,8 @@ static portMUX_TYPE s_state_lock = portMUX_INITIALIZER_UNLOCKED;
 static portMUX_TYPE s_log_lock = portMUX_INITIALIZER_UNLOCKED;
 static TickType_t s_last_mount_fail = (TickType_t)-1000;   /* mount-failed WARN, <=1/s */
 static bool s_warned_not_mounted;   /* cb_sd_info pre-mount WARN, one-shot */
+static bool s_warned_fallback;      /* 4-bit fallback WARN, one-shot (retryable path) */
+static bool s_warned_unmount_fail;  /* unmount-failure WARN, one-shot (retryable path) */
 
 /* Rate limit (<=1 Hz, first event always logs — wrap-safe: now -
  * (TickType_t)-1000 == now + 1000, always >= 1000). */
@@ -123,9 +125,13 @@ esp_err_t cb_sd_init(void)
     err = mount_at_width(4, &card);
     if (err != ESP_OK) {
         /* SD8: tear the slot down, then retry 1-bit with the 1BIT flag
-         * (DEINIT_ARG kept); the WARN is the frozen SD7 line. */
-        ESP_LOGW(TAG, "4-bit mount failed: %s — retrying 1-bit",
-                 esp_err_to_name(err));
+         * (DEINIT_ARG kept); the WARN is the frozen SD7 line. The path is
+         * retryable (failed init marks nothing), so the WARN is one-shot
+         * per failure streak and re-armed by a successful mount. */
+        if (one_shot(&s_warned_fallback)) {
+            ESP_LOGW(TAG, "4-bit mount failed: %s — retrying 1-bit",
+                     esp_err_to_name(err));
+        }
         (void)sdmmc_host_deinit();
         err = mount_at_width(1, &card);
     }
@@ -144,9 +150,10 @@ esp_err_t cb_sd_init(void)
     ESP_LOGI(TAG, "up mount=%s width=%d max_freq_khz=%d", k_mount_point,
              (int)s_bus_width, (int)CONFIG_CB_SD_MAX_FREQ_KHZ);
 
-    /* The part is up again: re-arm the info one-shot WARN. */
+    /* The part is up again: re-arm the one-shot WARNs. */
     portENTER_CRITICAL(&s_log_lock);
     s_warned_not_mounted = false;
+    s_warned_fallback = false;
     portEXIT_CRITICAL(&s_log_lock);
     return ESP_OK;
 }
@@ -166,8 +173,12 @@ esp_err_t cb_sd_unmount(void)
 
     err = esp_vfs_fat_sdcard_unmount(k_mount_point, card);
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "unmount failed: %s", esp_err_to_name(err));
-        return err;   /* SD8: state kept (still mounted) */
+        /* SD8: state kept (still mounted), so the call is retryable — gate
+         * the WARN one-shot per failure streak, re-armed on success. */
+        if (one_shot(&s_warned_unmount_fail)) {
+            ESP_LOGW(TAG, "unmount failed: %s", esp_err_to_name(err));
+        }
+        return err;
     }
     (void)sdmmc_host_deinit();
 
@@ -175,6 +186,10 @@ esp_err_t cb_sd_unmount(void)
     s_card = NULL;
     s_bus_width = 0;
     portEXIT_CRITICAL(&s_state_lock);
+
+    portENTER_CRITICAL(&s_log_lock);
+    s_warned_unmount_fail = false;
+    portEXIT_CRITICAL(&s_log_lock);
 
     ESP_LOGI(TAG, "unmounted");
     return ESP_OK;
