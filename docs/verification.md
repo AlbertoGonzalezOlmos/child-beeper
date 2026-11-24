@@ -75,6 +75,12 @@ Rule (also in `AGENTS.md`): *never claim hardware-verified without a board.*
   heartbeat: the no-card degraded path is **hardware-verified**. **A mount error is not proof that
   no card exists.** Mounted width, capacity, round-trip, clean unmount and successful 1-bit fallback
   remain **PENDING**; exact lines are in checklist 9 below.
+- **Item-6 docs-lane checks (2026-11-24; supplementary, not the full gate)**: with
+  `CB_BUILD_ROOT=build/kimi-k31-pro`, `./cb test` passed all **47** host tests (`# failed 0`),
+  `python3 -m unittest discover -s tools/tests -t . -q` passed **152** tests, `./cb verify --fast`
+  completed **7 pass, 0 fail, 9 skip**, and `./cb build app` passed with the 0.5.0 BSP header. The
+  fast run preceded `06_dashboard`, so its dashboard build, full coordinator gate and all hardware
+  checks remain PENDING.
 - **Item-3 round-1 agent-side checks (2026-11-23; supplementary, not the full gate)**: with
   `CB_BUILD_ROOT=build/kimi-k31-pro`, `./cb test` passed all **39** host tests (`# failed 0`),
   `./cb verify --fast` completed **7 pass, 0 fail, 7 skip** (109 CLI tests), and
@@ -150,8 +156,11 @@ Steps run in a **fixed order** with **stable ids**; each prints `[PASS]/[FAIL]/[
    pure-C tests remain the host regression suite. The versioned self-test parser is Python instead.
 3. `cli-tests` — the CLI's own unit tests:
    `python3 -m unittest discover -s tools/tests -t . -q` (a missing `tools/tests/` is a FAIL,
-   owner deepseek-flash). Item 4's suite had **112 tests**. Item 5 adds one missing-lock test and
-   two required-target negatives (full + fast), making the current suite **115 tests**.
+   owner deepseek-flash). Item 4's suite had **112 tests**. Item 5 added one missing-lock test and
+   two required-target negatives (full + fast), making its suite **115 tests**. Item 6 adds the
+   static `test_selftest.py` golden PASS / one-item RESULT:FAIL and malformed-output matrix,
+   including prefixed+ANSI input, absent-SKIP arithmetic, target preference and trailing live/alive
+   handling. The current item-6 suite is **152 tests** at `7419fea`; it needs no board or network.
 4. `pin-drift` — byte-compares Arduino copies of the shared headers against
    `components/cb_bsp/include/`. **SKIP while `arduino/` is absent.**
 5. `audit-static` — forbidden constructs + absolute-path scan (scope below).
