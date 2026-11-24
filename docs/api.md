@@ -1,7 +1,9 @@
 # BSP API reference (items 1–6 — frozen surface)
 
 > Status: item-6 ST1–ST8 and the ITEM6-RULINGS self-test/dashboard contract are frozen here, with
-> BSP version **0.5.0**; its full gate and hardware capture are PENDING. Item-5's full gate is **14
+> BSP version **0.5.0**. The coordinator's **15 pass, 0 fail, 2 skip** full gate and serial-half
+> hardware capture are recorded; the final round-2 gate, visual checks and live/alive soak are
+> PENDING. Item-5's full gate is **14
 > pass, 0 fail, 2 skip**, and its no-card degraded path is recorded in verification.md. Mounted I/O
 > and earlier root-version captures retain their historical status there. Item 4 is build-verified
 > (**13 pass, 0 fail, 2 skip**) and its IMU serial capture is recorded in verification.md. Item 3's
@@ -746,10 +748,17 @@ The grammar rules are part of the API contract, not suggestions for a best-effor
 - `SELFTEST BEGIN version=1` is the first contract line and version 1 is the only accepted grammar
   version. Exactly seven ITEM lines follow in the frozen order **lifecycle, lcd, rgb, button,
   battery, imu, sd**. No live or other example data line may interleave inside that sequence.
-- PASS/FAIL items carry `key=value` evidence. Every SKIP carries `reason=<token>` as its **first**
-  field: `needs-human` is button-only, `no-card` is SD-only, and `absent` is reserved for a part
-  whose init failure actually proves absence. The unattended button line is always exactly
-  `ITEM:button SKIP reason=needs-human poller=running`; a press window never turns it into PASS.
+- PASS/FAIL items carry meaningful `key=value` evidence. Required PASS evidence includes
+  `lifecycle init=ESP_OK`, `lcd lvgl=<x.y.z> frames=1`, `rgb cap_percent=20`, battery
+  `battery_mv=<n> plausible=1 calibrated=1` (`calibrated=0` is not a PASS), and IMU
+  `addr=0x6A|0x6B who=0x05 mag_g=<f>`. SD SKIP evidence is `reason=no-card|absent`; a mounted SD
+  PASS still reports `mounted=1 width=<1|4>`. Missing/false required evidence is a hard failure,
+  not a free-form PASS.
+- Every SKIP carries `reason=<token>` as its **first** field. `needs-human` is legal only on button;
+  `no-card` and `absent` are legal only on SD. A SKIP on lifecycle/lcd/rgb/battery/imu is invalid —
+  in particular, absence of RGB, battery or IMU on this board is a FAIL, not a SKIP. The unattended
+  button line is always exactly `ITEM:button SKIP reason=needs-human poller=running`; button
+  PASS/FAIL, a missing/stopped poller field, or a press-to-pass shortcut is rejected.
 - Exactly one RESULT terminates the contract; there is no END line. `total=7`,
   `pass+fail+skip==7`, and the three counts describe the seven actual ITEM verdicts. `RESULT:PASS`
   requires and means `fail==0`; otherwise the terminal is `RESULT:FAIL` and the CLI lists failing
@@ -798,11 +807,14 @@ Target preference is **`06_dashboard` → `07_selftest` → `08_selftest`**. The
 future firmware rename does not silently break the command, but preference is explicit rather than
 set-iteration order. There are no new CLI flags.
 
-The Python parser validates the version, all seven tokens/order/verdicts, required SKIP reason,
-malformed ITEM/RESULT lines, exactly one terminal RESULT, item/result counts, arithmetic, and the
-PASS/fail-zero invariant. Its static host suite includes the golden PASS above, a valid one-item
-RESULT:FAIL, and negatives for bad version, 6/8 items, wrong order/tokens, missing reason, SKIP with
-PASS text, arithmetic mismatch, RESULT not last, and a second RESULT.
+The Python parser validates exactly one first BEGIN/version, all seven tokens/order/verdicts,
+required per-item evidence, the button's exact line, legal SKIP token/reason pairs, malformed
+ITEM/RESULT lines, exactly one terminal RESULT, item/result counts, arithmetic, and the
+PASS/fail-zero / FAIL/fail-nonzero invariants. After the first RESULT, `./cb selftest` keeps listening
+for an approximately **2 s drain** and rejects any trailing ITEM/RESULT/SELFTEST contract line;
+ordinary live/alive lines remain legal. The static host suite covers the golden PASS, a valid
+one-item RESULT:FAIL, and one negative for every rule above, including duplicate BEGIN, false
+battery calibration evidence and trailing drain garbage.
 
 - Overall valid PASS: print **`N skipped (unverified)`** and exit **0**. Two SKIPs in the golden run
   are therefore explicitly unverified even though the command succeeds.

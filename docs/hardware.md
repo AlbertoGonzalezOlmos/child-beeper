@@ -3,9 +3,9 @@
 > Status (updated for item 6): chip identity, flash size, PSRAM presence, console and app boot are
 > **hardware-verified**. Item-2 display, item-3 RGB/button/battery and item-4 IMU serial checks are
 > also recorded. Item-5's no-card degraded path was serial-observed on 2026-11-23; mounted I/O and
-> successful fallback remain PENDING. The item-6 dashboard/self-test observation model is frozen,
-> but its build gate and physical capture are PENDING. A mount error is not proof of physical card
-> absence. Pin values mirror `components/cb_bsp/include/cb_pins.h`; measurements live in
+> successful fallback remain PENDING. Item-6's full gate and serial-half capture are recorded;
+> its final round-2 gate, dashboard visuals and live/alive soak are PENDING. A mount error is not
+> proof of physical card absence. Pin values mirror `components/cb_bsp/include/cb_pins.h`; measurements live in
 > [verification.md](verification.md).
 
 ## Board / SoC
@@ -234,8 +234,13 @@ The hardware meaning is deliberately narrow:
 - SD PASS requires a mounted card; the golden no-card line is a SKIP and stays unverified. With no
   CD/WP pins, `reason=no-card` cannot by itself establish physical slot emptiness or mounted I/O.
 
-Checklist 10 in [verification.md](verification.md) separates the coordinator's serial capture from
-all of these human/electrical/card-dependent PENDING items.
+**Coordinator serial-half capture — PASS 2026-11-23**: `./cb selftest` exited 0 with the seven
+ordered gold-shaped items and `RESULT:PASS total=7 pass=5 fail=0 skip=2`. Actual evidence was
+`battery_mv=4209 pin_mv=1393 calibrated=1 plausible=1`, `addr=0x6B who=0x05 mag_g=1.00`,
+`live bat=4209mV plausible=1 imu_mag=1.00g addr=0x6B`, and `cb: 2 skipped (unverified)`.
+This verifies the serial contract and those readings, not the two SKIPs or any visual/motion /
+accuracy/card-dependent property. Checklist 10 in [verification.md](verification.md) separates this
+measured serial half from the live/alive soak and all human/electrical/card-dependent PENDING items.
 
 ## RGB LED
 

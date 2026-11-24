@@ -1,7 +1,8 @@
 # Documentation index — child-beeper programming toolkit
 
 > Status: item-6's BSP **0.5.0**, `cb_bsp_part_result()`, exact self-test grammar and dashboard
-> contract are frozen; its full gate and hardware capture are **PENDING**. Item-5 full gate is **14
+> contract are frozen. Its full gate and serial-half capture are recorded; the final round-2 gate,
+> dashboard visuals and live/alive soak are **PENDING**. Item-5 full gate is **14
 > pass, 0 fail, 2 skip**. Item-2/3/4 serial evidence and item-5's no-card degraded capture are
 > recorded in verification.md; mounted SD I/O remains PENDING. Levels + checklist:
 > [verification.md](verification.md).
@@ -79,7 +80,7 @@ arduino/                      # item 7: staged CBBoard library + sketches (absen
 | RGB LED, BOOT button, battery | `cb_rgb`, `cb_button`, `cb_battery` | `02_rgb_button`, `03_battery` | **item 3 build-verified** (round-2 `d7fabd3`: 12 pass, 0 fail, 2 skip, 129.0 s, 2026-11-23) | serial-verified: battery sample, RGB 20 % cap, button poller, boot summary 0.2.0; visual/multimeter/gesture PENDING (needs human) |
 | IMU QMI8658 (new `i2c_master`) | `cb_i2c`, `cb_imu`, `cb_imu_math` | `04_imu` | **item 4 build-verified**: 13 pass, 0 fail, 2 skip; sdkconfig-assert 5 targets | ✓ serial 2026-11-23: 0x6B, WHO 0x05, stable 0.99 g IMU samples; motion response + accuracy/bias calibration PENDING (needs human) |
 | TF card (SDMMC, no auto-format) | `cb_sd` | `05_sdcard` | **item 5 build-verified**: 14 pass, 0 fail, 2 skip; sdkconfig-assert 6 targets | ✓ no-card degraded path 2026-11-23: one direct init, both widths timed out, alive continued; mounted I/O and successful 1-bit fallback PENDING. A mount error is not proof that no card exists. |
-| Self-test + dashboard | `cb_bsp_part_result`, BSP **0.5.0** | `06_dashboard`, `./cb selftest` | **Build-verified (targeted)** — app + 06, 47 host + 152 CLI tests, fast gate 7/0/10 green 2026-11-24; full gate PENDING | **PENDING** — checklist 10; golden no-card report has 5 PASS / 0 FAIL / 2 SKIP, and both SKIPs stay unverified |
+| Self-test + dashboard | `cb_bsp_part_result`, BSP **0.5.0** | `06_dashboard`, `./cb selftest` | **Full gate 15/0/2 recorded**; app + six examples, sdkconfig 7 targets; current 47 host + **170 CLI** tests after `acd83ef`; final round-2 gate PENDING | **✓ serial-half 2026-11-23** — exit 0, exact gold shapes, battery 4209 mV, IMU 0x6B/1.00 g, 2 SKIPs unverified; visuals, live/alive soak, mounted card and root 0.5.0 PENDING |
 | Arduino parity (CBBoard, sketches) | item 7 | `arduino/` | item 7 | ✗ |
 | Wi-Fi / BLE scan (tier-2) | — | `08_wifi_scan`, `09_ble_scan` | item 8 | ✗ |
 
