@@ -24,7 +24,7 @@ extern "C" {
 #endif
 
 #define CB_BSP_VERSION_MAJOR 0
-#define CB_BSP_VERSION_MINOR 4
+#define CB_BSP_VERSION_MINOR 5
 #define CB_BSP_VERSION_PATCH 0
 
 typedef enum {
@@ -44,7 +44,18 @@ typedef enum {
 esp_err_t cb_bsp_init(uint32_t parts);   /* inits only the requested parts, in fixed order:
                                             BACKLIGHT -> RGB -> I2C -> IMU -> BUTTON -> BATTERY
                                             -> LCD -> LVGL -> SD (SD last: mount can block)      */
-const char *cb_bsp_version(void);        /* "0.4.0" (R8: MINOR bumps per item) */
+
+/* ST1: the last init result recorded by cb_bsp_init() for one part. The
+ * getter's return is the QUERY status: ESP_OK writes the recorded result
+ * to *out (the recorded value is the part's ACTUAL init result, including
+ * optional failures cb_bsp_init suppressed, and may itself be
+ * ESP_ERR_NOT_FOUND); ESP_ERR_INVALID_ARG for a NULL out or a part that is
+ * not exactly one CB_PART_* bit (NONE/ALL/multi-bit/unknown reject);
+ * ESP_ERR_NOT_FOUND when the part was never attempted, with *out
+ * untouched. No status struct, no bitmask accessor, no lifetime pointer. */
+esp_err_t cb_bsp_part_result(cb_part_t part, esp_err_t *out);
+
+const char *cb_bsp_version(void);        /* "0.5.0" (R8: MINOR bumps per item) */
 
 #ifdef __cplusplus
 }
