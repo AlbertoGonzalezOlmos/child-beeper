@@ -1,9 +1,13 @@
-"""Static audits: forbidden constructs, absolute home paths, Arduino pin-header drift.
+"""Static audits: forbidden constructs, absolute home paths, LCD invariants.
 
-Rulings honoured (CONTRACT R7):
-  * construct rules scan only code/CMake files under main/, components/, examples/, tests/, tools/;
+Rulings honoured (CONTRACT R7 / item-7 AR11):
+  * construct rules scan only code/CMake files under main/, components/, examples/, tests/,
+    tools/ and arduino/ (so .ino/.h sketches obey the forbidden-construct rules too);
     docs/** and *.md are exempt (they must be able to quote forbidden symbols);
   * the absolute-path rule scans all tracked text files, with one allowlist entry: eim_config.toml.
+
+The item-1 Arduino pin-header drift check moved to cbchecks/arduino.py (item-7 AR10:
+real staged-vs-canonical byte comparison; that module is the sole mirror.txt parser).
 """
 
 from __future__ import annotations
@@ -13,13 +17,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
 
-from .context import BSP_PINS, Ctx
+from .context import Ctx
 
 PASS = "PASS"
 FAIL = "FAIL"
 SKIP = "SKIP"
 
-CONSTRUCT_DIRS = ("main", "components", "examples", "tests", "tools")
+CONSTRUCT_DIRS = ("main", "components", "examples", "tests", "tools", "arduino")
 CODE_SUFFIXES = {".c", ".h", ".cpp", ".hpp", ".ino", ".cc"}
 CMAKE_NAMES = {"CMakeLists.txt"}
 CMAKE_SUFFIXES = {".cmake"}
@@ -192,25 +196,6 @@ def scan_abs_paths(ctx: Ctx) -> list[Finding]:
             if ABS_PATH_RE.search(line):
                 findings.append(Finding(rel, number, "absolute home path in a tracked source", line))
     return findings
-
-
-def pin_drift(ctx: Ctx) -> tuple[str, str]:
-    """Compare Arduino copies of cb_pins.h with the canonical header (R7 / R6 SKIP rule)."""
-    canonical = ctx.path(BSP_PINS)
-    arduino = ctx.path("arduino")
-    if not arduino.is_dir():
-        return SKIP, "no arduino/ tree yet (item 7)"
-    if not canonical.is_file():
-        return FAIL, f"{BSP_PINS} missing (owner: kimi-k31-pro)"
-    copies = sorted(p for p in arduino.rglob("cb_pins.h") if p.is_file())
-    if not copies:
-        return SKIP, "arduino/ present but no cb_pins.h copy yet"
-    reference = canonical.read_bytes()
-    for copy in copies:
-        rel = copy.relative_to(ctx.root).as_posix()
-        if copy.read_bytes() != reference:
-            return FAIL, f"{rel} differs from {BSP_PINS}"
-    return PASS, f"{len(copies)} copy(ies) byte-equal"
 
 
 def audit_static(ctx: Ctx) -> tuple[str, str]:

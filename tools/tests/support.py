@@ -20,6 +20,62 @@ if str(TOOLS) not in sys.path:
 from cbchecks.context import Ctx  # noqa: E402
 from cbchecks.proc import Result, Runner  # noqa: E402
 
+# Post-item-7 Arduino tree (AR8/AR16): the frozen 12-entry mirror set and the two
+# sketches. Keep in sync with arduino/libraries/CBBoard/mirror.txt.
+ARDUINO_MIRROR = (
+    "include/cb_pins.h",
+    "include/cb_math.h",
+    "include/cb_button_fsm.h",
+    "include/cb_qmi8658_regs.h",
+    "include/cb_rgb_math.h",
+    "include/cb_battery_math.h",
+    "include/cb_imu_math.h",
+    "src/cb_math.c",
+    "src/cb_button_fsm.c",
+    "src/cb_rgb_math.c",
+    "src/cb_battery_math.c",
+    "src/cb_imu_math.c",
+)
+ARDUINO_SKETCHES = ("rgb_blink", "button_events")
+
+
+def make_arduino_tree(tmp: Path) -> None:
+    """The committed post-item-7 arduino/ tree: umbrella library + two sketches.
+
+    No mirror file is ever committed under arduino/ (AR1/AR2) — the canonical pure
+    modules live under components/cb_bsp and are staged by cbchecks.arduino at build
+    time; pin-drift byte-compares the stage against them.
+    """
+    lib = tmp / "arduino" / "libraries" / "CBBoard"
+    lib.mkdir(parents=True, exist_ok=True)
+    (lib / "CBBoard.h").write_text(
+        "#ifndef CBBOARD_H\n#define CBBOARD_H\n"
+        + "".join(
+            f'#include "{Path(rel).name}"\n' for rel in ARDUINO_MIRROR if rel.startswith("include/")
+        )
+        + "#endif /* CBBOARD_H */\n",
+        encoding="utf-8",
+    )
+    (lib / "library.properties").write_text(
+        "name=CBBoard\nversion=0.1.0\narchitectures=esp32\nincludes=CBBoard.h\n",
+        encoding="utf-8",
+    )
+    (lib / "mirror.txt").write_text(
+        "# fixture mirror manifest (AR8)\n" + "\n".join(ARDUINO_MIRROR) + "\n",
+        encoding="utf-8",
+    )
+    for name in ARDUINO_SKETCHES:
+        sketch = tmp / "arduino" / "sketches" / name
+        sketch.mkdir(parents=True, exist_ok=True)
+        (sketch / f"{name}.ino").write_text(
+            f"#include <CBBoard.h>\nvoid setup() {{}}\nvoid loop() {{}}\n",
+            encoding="utf-8",
+        )
+    for rel in ARDUINO_MIRROR:
+        canonical = tmp / "components" / "cb_bsp" / rel
+        canonical.parent.mkdir(parents=True, exist_ok=True)
+        canonical.write_text(f"/* fixture {rel} */\n", encoding="utf-8")
+
 
 class FakeRunner(Runner):
     """Records invocations and returns canned results; never spawns a process."""
@@ -92,7 +148,8 @@ def make_repo(
         "05_sdcard",
         "06_dashboard",
     ),
-    arduino: bool = False,
+    # Default mirrors the post-item-7 tree: the CBBoard library + two sketches (AR16).
+    arduino: bool = True,
     host_tests: bool = True,
 ) -> Path:
     """Create a minimal fake repository tree (no build, no network)."""
@@ -161,13 +218,7 @@ def make_repo(
         host.mkdir(parents=True, exist_ok=True)
         (host / "Makefile").write_text("test:\n\t@true\n", encoding="utf-8")
     if arduino:
-        sketch = tmp / "arduino" / "libraries" / "CBBoard" / "examples" / "01_smoke"
-        sketch.mkdir(parents=True, exist_ok=True)
-        (sketch / "01_smoke.ino").write_text("void setup(){}\nvoid loop(){}\n", encoding="utf-8")
-        (tmp / "arduino" / "libraries" / "CBBoard" / "src").mkdir(parents=True, exist_ok=True)
-        (tmp / "arduino" / "libraries" / "CBBoard" / "src" / "cb_pins.h").write_text(
-            "#define CB_PIN_RGB 38\n", encoding="utf-8"
-        )
+        make_arduino_tree(tmp)
     (tmp / ".git").mkdir(exist_ok=True)
     return tmp
 

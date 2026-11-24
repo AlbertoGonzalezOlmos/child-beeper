@@ -48,8 +48,13 @@ class BuildSimRunner(FakeRunner):
         self.build_ok = build_ok
         self.reply("cb.py flash", 2, "", HINT)
         self.reply("cb.py monitor", 2, "", HINT)
+        self.reply("cb.py arduino --upload", 2, "", HINT)
         self.reply("make test", 0, "ok - all\n1..1\n")
         self.reply("-m unittest discover", 0, "", "Ran 185 tests in 0.1s\n\nOK\n")
+        # AR14: with arduino/ present the doctor check is fatal, so simulate a sane toolchain.
+        self.reply("arduino-cli version", 0, "arduino-cli 1.4.1\n", "")
+        self.reply("core list", 0, "esp32:esp32 3.3.12 3.3.12 esp32\n", "")
+        self.reply("lib list", 0, "", "")
 
     def run_idf(self, args, *, cwd, timeout=3600.0):  # type: ignore[override]
         result = super().run_idf(args, cwd=cwd)
@@ -114,13 +119,42 @@ class TestVerifyHappyPath(TempRepoTest):
                 "build:05_sdcard",
                 "build:06_dashboard",
                 "sdkconfig-assert",
-                "arduino:*",
+                "arduino:button_events",
+                "arduino:rgb_blink",
                 "guards-no-board",
                 "report",
             ],
         )
         self.assertEqual(code, 0, [r.detail for r in results if r.status != "PASS"])
-        self.assertEqual([r.status for r in results if r.id == "pin-drift"], ["SKIP"])
+        # AR10: with arduino/ present pin-drift is the real byte compare, never a SKIP.
+        self.assertEqual([r.status for r in results if r.id == "pin-drift"], ["PASS"])
+        # AR12: real required sketch steps, no synthetic arduino:* SKIP.
+        self.assertNotIn("arduino:*", ids)
+
+    def test_arduino_steps_compile_against_the_staged_library(self) -> None:
+        ctx = ctx_for(self.root)
+        runner = BuildSimRunner(ctx)
+        from cbchecks import build as builder
+
+        target = next(t for t in verify.discover(ctx) if t.name == "rgb_blink")
+        outcome = builder.build_arduino(ctx, runner, target)
+        self.assertTrue(outcome.ok, outcome.detail)
+        command = " ".join(runner.calls[0])
+        self.assertIn("compile", command)
+        self.assertIn(
+            "--fqbn esp32:esp32:esp32s3:PSRAM=opi,FlashSize=16M,CDCOnBoot=cdc,"
+            "USBMode=hwcdc,PartitionScheme=default",
+            command,
+        )
+        self.assertIn(f"--libraries {ctx.build_root / 'arduino' / 'libraries'}", command)
+        self.assertIn(f"--build-path {ctx.build_root / 'arduino' / 'rgb_blink'}", command)
+        self.assertIn(str(ctx.root / "arduino" / "sketches" / "rgb_blink"), command)
+        staged_src = ctx.build_root / "arduino" / "libraries" / "CBBoard" / "src"
+        self.assertTrue((staged_src / "cb_pins.h").is_file())
+        self.assertEqual(
+            (staged_src / "cb_pins.h").read_bytes(),
+            (ctx.root / "components" / "cb_bsp" / "include" / "cb_pins.h").read_bytes(),
+        )
 
     def test_report_files_and_schema(self) -> None:
         code, _, ctx = _run_verify(self.root)
@@ -171,6 +205,9 @@ class TestVerifyHappyPath(TempRepoTest):
         self.assertEqual(by_id["build:app"].status, "SKIP")
         self.assertEqual(by_id["build:01_lcd_hello"].status, "SKIP")
         self.assertEqual(by_id["sdkconfig-assert"].status, "SKIP")
+        # AR12: --fast keeps skipping the sketch builds, but the required steps stay.
+        self.assertEqual(by_id["arduino:rgb_blink"].status, "SKIP")
+        self.assertEqual(by_id["arduino:button_events"].status, "SKIP")
         self.assertEqual(by_id["doctor"].status, "PASS")
         self.assertEqual(by_id["host-tests"].status, "PASS")
         self.assertEqual(by_id["cli-tests"].status, "PASS")
@@ -331,6 +368,48 @@ class TestVerifyFailures(TempRepoTest):
         self.assertEqual(by_id["host-tests"].status, "FAIL")
         self.assertIn("kimi-k31-pro", by_id["host-tests"].detail)
         self.assertEqual(code, 1)
+
+    def test_missing_required_sketch_fails_never_vanishes(self) -> None:
+        # AR12: a deleted sketch FAILs instead of silently leaving the step list.
+        make_repo(self.root)
+        import shutil
+
+        shutil.rmtree(self.root / "arduino" / "sketches" / "rgb_blink")
+        code, results, _ = _run_verify(self.root)
+        by_id = {r.id: r for r in results}
+        self.assertEqual(by_id["arduino:rgb_blink"].status, "FAIL")
+        self.assertIn("missing", by_id["arduino:rgb_blink"].detail)
+        self.assertEqual(by_id["arduino:button_events"].status, "PASS")
+        self.assertEqual(code, 1)
+
+    def test_fast_mode_still_fails_without_required_sketch(self) -> None:
+        make_repo(self.root)
+        import shutil
+
+        shutil.rmtree(self.root / "arduino" / "sketches" / "button_events")
+        code, results, _ = _run_verify(self.root, fast=True)
+        by_id = {r.id: r for r in results}
+        self.assertEqual(by_id["arduino:button_events"].status, "FAIL")
+        self.assertEqual(code, 1)
+
+    def test_no_arduino_tree_fails_both_required_sketches(self) -> None:
+        make_repo(self.root, arduino=False)
+        code, results, _ = _run_verify(self.root)
+        by_id = {r.id: r for r in results}
+        self.assertEqual(by_id["arduino:rgb_blink"].status, "FAIL")
+        self.assertEqual(by_id["arduino:button_events"].status, "FAIL")
+        # pin-drift SKIPs while arduino/ is absent (AR10) — but the gate still fails.
+        self.assertEqual(by_id["pin-drift"].status, "SKIP")
+        self.assertEqual(code, 1)
+
+    def test_no_arduino_flag_opts_out_of_the_arduino_gate(self) -> None:
+        make_repo(self.root)
+        code, results, _ = _run_verify(self.root, no_arduino=True)
+        ids = [r.id for r in results]
+        self.assertNotIn("arduino:rgb_blink", ids)
+        self.assertNotIn("arduino:button_events", ids)
+        self.assertEqual({r.id: r.status for r in results}["pin-drift"], "SKIP")
+        self.assertEqual(code, 0)
 
     def test_build_failure_fails_and_still_writes_report(self) -> None:
         make_repo(self.root)
@@ -577,7 +656,7 @@ class TestBuildAllScope(TempRepoTest):
     def test_build_all_ignores_arduino_sketches(self) -> None:
         import cb as cli
 
-        make_repo(self.root, arduino=True)
+        make_repo(self.root)
         built: list[str] = []
 
         class RecordingRunner(BuildSimRunner):
@@ -596,7 +675,8 @@ class TestBuildAllScope(TempRepoTest):
             cli.Runner = saved  # type: ignore[assignment]
         self.assertEqual(code, 0, out.getvalue())
         self.assertTrue(any("examples/01_lcd_hello" in cmd for cmd in built), built)
-        self.assertFalse(any("01_smoke" in cmd for cmd in built), "arduino must not be built here")
+        self.assertFalse(any("rgb_blink" in cmd for cmd in built), "arduino must not be built here")
+        self.assertFalse(any("button_events" in cmd for cmd in built), "arduino must not be built here")
 
 
 class TestDeps(TempRepoTest):

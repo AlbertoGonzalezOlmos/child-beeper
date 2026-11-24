@@ -5,9 +5,12 @@ Frozen order (CONTRACT):
   arduino:<sketch>…, guards-no-board, report
 
 Ruling R6: for item 1 the host tests, the root app and 01_lcd_hello are required (missing → FAIL);
-SKIP is allowed only for pin-drift and arduino:* (no arduino/ tree yet) and for --offline
+SKIP is allowed only for pin-drift (while arduino/ is absent) and for --offline
 sub-checks when unshare is unavailable. Ruling R8: --offline uses unshare, never
 IDF_COMPONENT_MANAGER.
+Item 7 (AR10/AR12): pin-drift is the real staged-vs-canonical byte compare; the two
+Arduino sketches are required steps (a deleted sketch FAILs, never silently vanishes) —
+the item-1 synthetic `arduino:*` SKIP is gone. --fast keeps skipping the sketch builds.
 """
 
 from __future__ import annotations
@@ -21,6 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Sequence
 
+from . import arduino as arduino_mod
 from . import build as builder
 from . import deps as deps_mod
 from . import doctor, report, sizes, staticchecks
@@ -43,6 +47,14 @@ REQUIRED_EXAMPLES = (
     "04_imu",
     "05_sdcard",
     "06_dashboard",
+)
+
+# Item 7 (AR12/AR16): the sketch set is two and both are required — same rule as the
+# examples, so a deleted sketch (or a missing arduino/ tree) FAILs the gate instead
+# of silently vanishing from the step list. Checked even in --fast mode.
+REQUIRED_SKETCHES = (
+    "rgb_blink",
+    "button_events",
 )
 
 OFFLINE_UNAVAILABLE = "offline namespace (unshare -rn) unavailable — NOT proven offline"
@@ -122,30 +134,38 @@ def _cli_tests(ctx: Ctx, runner: Runner) -> tuple[str, str, dict]:
 
 
 def _guards(ctx: Ctx, runner: Runner) -> tuple[str, str, dict]:
-    """R6: prove flash/monitor exit 2 and print the recovery hint, without hardware."""
+    """R6/AR13: prove flash/monitor/arduino-upload exit 2 with the hint, without hardware."""
     tree = ctx.root
     env = dict(os.environ)
     env["CB_FORCE_NO_PORTS"] = "1"
     env.setdefault("CB_BUILD_ROOT", os.environ.get("CB_BUILD_ROOT", str(ctx.build_root)))
+    guard_cmds: list[list[str]] = [["flash"], ["monitor"]]
+    if not ctx.no_arduino:
+        # AR13 upload arm: the guard fires BEFORE any build, so no board -> exit 2, no compile.
+        sketch_names = [t.name for t in discover(ctx) if t.kind == "arduino"]
+        if sketch_names:
+            guard_cmds.append(["arduino", "--upload", sketch_names[0]])
     checks: dict[str, int] = {}
     problems: list[str] = []
-    for command in ("flash", "monitor"):
+    for argv in guard_cmds:
+        label = " ".join(argv)
         proc = runner.run(
-            [sys.executable, str(tree / "tools" / "cb.py"), command],
+            [sys.executable, str(tree / "tools" / "cb.py"), *argv],
             cwd=tree,
             env_extra={"CB_FORCE_NO_PORTS": "1"},
             timeout=120.0,
         )
-        checks[command] = proc.code
+        checks[label] = proc.code
         if proc.code != 2:
-            problems.append(f"{command} exited {proc.code}, expected 2")
+            problems.append(f"{label} exited {proc.code}, expected 2")
             continue
         text = (proc.err or "") + (proc.out or "")
         if "BOOT" not in text or "RESET" not in text:
-            problems.append(f"{command} exited 2 but the message lacks the BOOT+RESET hint")
+            problems.append(f"{label} exited 2 but the message lacks the BOOT+RESET hint")
     if problems:
         return FAIL, "; ".join(problems), checks
-    return PASS, "flash+monitor exit 2 with the recovery hint (CB_FORCE_NO_PORTS=1)", checks
+    arms = "+".join(label.split()[0] for label in checks)
+    return PASS, f"{arms} exit 2 with the recovery hint (CB_FORCE_NO_PORTS=1)", checks
 
 
 def _offline_gate(ctx: Ctx, runner: Runner) -> bool:
@@ -183,9 +203,11 @@ def verify(ctx: Ctx, runner: Runner, *, fast: bool = False) -> tuple[int, list[S
     # 2b. CLI unit tests (python -m unittest, mocked subprocess) --------------
     steps.step("cli-tests", lambda: _cli_tests(ctx, runner))
 
-    # 3. pin drift ------------------------------------------------------------
+    # 3. pin drift (AR10: the real staged-vs-canonical byte compare) ------------
     def _pin_drift() -> tuple[str, str, dict]:
-        status, detail = staticchecks.pin_drift(ctx)
+        if ctx.no_arduino:
+            return SKIP, "--no-arduino: arduino gating opted out", {}
+        status, detail = arduino_mod.pin_drift(ctx)
         return status, detail, {}
 
     steps.step("pin-drift", _pin_drift)
@@ -273,18 +295,24 @@ def verify(ctx: Ctx, runner: Runner, *, fast: bool = False) -> tuple[int, list[S
     else:
         steps.step("sdkconfig-assert", _assert)
 
-    # 8. Arduino sketches (SKIP is allowed in item 1) -------------------------
+    # 8. Arduino sketches (AR12: required steps, no synthetic SKIP) -----------
     if ctx.no_arduino:
         pass
     else:
         sketches = [t for t in discover(ctx) if t.kind == "arduino"]
-        if not sketches:
-            steps.skip("arduino:*", "no arduino/ sketches yet (item 7)")
+        present = {t.name for t in sketches}
+        for name in REQUIRED_SKETCHES:
+            if name not in present:
+                steps.step(
+                    f"arduino:{name}",
+                    lambda name=name: (FAIL, f"arduino/sketches/{name} missing (.ino not found)", {}),
+                )
         for sketch in sketches:
             if fast:
                 steps.skip(f"arduino:{sketch.name}", "fast mode (builds skipped)")
             elif not _offline_gate(ctx, runner):
                 steps.skip(f"arduino:{sketch.name}", OFFLINE_UNAVAILABLE)
+                offline_skipped += 1
             else:
                 steps.step(f"arduino:{sketch.name}", lambda t=sketch: _do_build(ctx, runner, t))
 
@@ -324,5 +352,15 @@ def _do_build(ctx: Ctx, runner: Runner, target: Target) -> tuple[str, str, dict]
     outcome = builder.build_target(ctx, runner, target)
     extra = dict(outcome.extra)
     if outcome.ok:
-        extra["sizes"] = sizes.sizes_for(ctx, runner, target, outcome.build_dir)
+        if target.is_idf:
+            extra["sizes"] = sizes.sizes_for(ctx, runner, target, outcome.build_dir)
+        else:
+            # Arduino sketches have no idf.py size; measure the compiled .bin directly.
+            binary = sizes.primary_bin(outcome.build_dir)
+            extra["sizes"] = {
+                "bin": str(binary) if binary else None,
+                "bin_bytes": binary.stat().st_size if binary else None,
+                "source": "bin",
+                "fallback": True,
+            }
     return (PASS if outcome.ok else FAIL), outcome.detail, extra

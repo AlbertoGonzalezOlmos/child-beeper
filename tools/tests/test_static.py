@@ -1,4 +1,8 @@
-"""Static audits: forbidden constructs, absolute home paths, pin drift."""
+"""Static audits: forbidden constructs, absolute home paths, LCD invariants.
+
+The Arduino pin-drift tests live in test_arduino.py (item-7 AR10: cbchecks.arduino
+owns the real staged-vs-canonical byte compare).
+"""
 
 from __future__ import annotations
 
@@ -69,6 +73,16 @@ class TestForbiddenConstructs(TempRepoTest):
             "/* cbcheck:allow-file: rule catalogue */\n" + 'x = "' + "driver/i2c" + '.h";' + "\n",
         )
         self.assertEqual(staticchecks.scan_forbidden(self.ctx), [])
+
+
+    def test_sketches_under_arduino_are_scanned_too(self) -> None:
+        # AR11: audit-static gains arduino/ as a scanned tree — .ino files obey the rules.
+        _write(
+            self.root / "arduino" / "sketches" / "bad" / "bad.ino",
+            "void loop(){ neo" + "pixelWrite(38, 8, 0, 0); }\n",
+        )
+        rules = " ".join(f.rule for f in staticchecks.scan_forbidden(self.ctx))
+        self.assertIn("neopixelWrite", rules)
 
 
 class TestLcdInvariants(TempRepoTest):
@@ -156,32 +170,6 @@ class TestAbsolutePaths(TempRepoTest):
         _write(self.root / "build" / "log.txt", home_path + "\n")
         _write(self.root / ".git" / "config", home_path + "\n")
         self.assertEqual(staticchecks.scan_abs_paths(self.ctx), [])
-
-
-class TestPinDrift(TempRepoTest):
-    def test_skips_when_arduino_tree_is_absent(self) -> None:
-        make_repo(self.root)
-        status, detail = staticchecks.pin_drift(ctx_for(self.root))
-        self.assertEqual(status, "SKIP")
-        self.assertIn("arduino", detail)
-
-    def test_byte_equal_copy_passes(self) -> None:
-        make_repo(self.root, arduino=True)
-        canonical = self.root / staticchecks.BSP_PINS
-        _write(canonical, "#define CB_PIN_RGB 38\n")
-        copy = self.root / "arduino/libraries/CBBoard/src/cb_pins.h"
-        copy.write_bytes(canonical.read_bytes())
-        status, _ = staticchecks.pin_drift(ctx_for(self.root))
-        self.assertEqual(status, "PASS")
-
-    def test_mutated_copy_fails(self) -> None:
-        make_repo(self.root, arduino=True)
-        canonical = self.root / staticchecks.BSP_PINS
-        _write(canonical, "#define CB_PIN_RGB 38\n")
-        _write(self.root / "arduino/libraries/CBBoard/src/cb_pins.h", "#define CB_PIN_RGB 39\n")
-        status, detail = staticchecks.pin_drift(ctx_for(self.root))
-        self.assertEqual(status, "FAIL")
-        self.assertIn("differs", detail)
 
 
 if __name__ == "__main__":

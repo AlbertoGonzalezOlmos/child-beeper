@@ -14,6 +14,7 @@ import struct
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import arduino as arduino_mod
 from .context import PARTITIONS_CSV, Ctx
 from .proc import Runner
 from .sizes import artifacts, primary_bin
@@ -295,25 +296,42 @@ def build_idf(ctx: Ctx, runner: Runner, target: Target, *, timeout: float = 3600
     return BuildOutcome(ok, target, bdir, log, detail, extra)
 
 
-def build_arduino(ctx: Ctx, runner: Runner, target: Target) -> BuildOutcome:
+def build_arduino(ctx: Ctx, runner: Runner, target: Target, *, timeout: float = 1800.0) -> BuildOutcome:
+    """AR9: stage the CBBoard mirror fresh, then compile with the locked FQBN.
+
+    Staging is always wipe-and-copy, so a compiled sketch can never be built from
+    stale mirror bytes (pin-drift is the read-only counterpart, see cbchecks/arduino.py).
+    """
     bdir = build_dir(ctx, target)
     bdir.mkdir(parents=True, exist_ok=True)
+    staged, err = arduino_mod.stage_library(ctx)
+    if err is not None or staged is None:
+        log = _write_log(ctx, f"arduino:{target.name}", err or "staging failed")
+        return BuildOutcome(
+            False,
+            target,
+            bdir,
+            log,
+            f"staging failed: {err} (log {log})",
+            {"build_dir": str(bdir), "log": str(log), "artifacts": [], "sizes": dict(SIZES_PLACEHOLDER)},
+        )
     argv = [
         "compile",
-        "-b", ARD_FQBN,
+        "--fqbn", ARD_FQBN,
+        "--libraries", str(arduino_mod.staged_libraries_dir(ctx)),
         "--build-path", str(bdir),
         "--warnings", "all",
         "--no-color",
+        str(target.path),
     ]
-    libraries = ctx.path("arduino") / "libraries"
-    if libraries.is_dir():
-        argv += ["--libraries", str(libraries)]
-    argv.append(str(target.path))
-    result = runner.run_arduino(argv, cwd=ctx.root)
+    result = runner.run_arduino(argv, cwd=ctx.root, timeout=timeout)
     log = _write_log(ctx, f"arduino:{target.name}", (result.out or "") + (result.err or ""))
     ok = result.ok
     if ok:
-        detail = f"compiled; log {log}"
+        detail = (
+            f"compiled against staged CBBoard ({len(arduino_mod.REQUIRED_MIRROR)} mirror files); "
+            f"log {log}"
+        )
     else:
         reason = extract_error((result.out or "") + (result.err or "")) or result.tail(4)
         detail = f"compile failed: {reason} (log {log})"
@@ -330,6 +348,19 @@ def build_arduino(ctx: Ctx, runner: Runner, target: Target) -> BuildOutcome:
             "sizes": dict(SIZES_PLACEHOLDER),
         },
     )
+
+
+def upload_arduino(ctx: Ctx, runner: Runner, target: Target, port: str, *, timeout: float = 300.0):
+    """AR13: upload the compiled --build-path output (caller compiles + guards the port first)."""
+    argv = [
+        "upload",
+        "-p", port,
+        "--fqbn", ARD_FQBN,
+        "--input-dir", str(build_dir(ctx, target)),
+        "--no-color",
+        str(target.path),
+    ]
+    return runner.run_arduino(argv, cwd=ctx.root, timeout=timeout)
 
 
 def build_target(ctx: Ctx, runner: Runner, target: Target) -> BuildOutcome:
