@@ -5,6 +5,7 @@ import io
 import json
 import os
 import unittest
+from unittest.mock import patch
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
@@ -133,7 +134,8 @@ class TestMonitorTargetSelection(TempRepoTest):
         cli.Runner = MonitorRunner  # type: ignore[assignment]
         out, err = io.StringIO(), io.StringIO()
         try:
-            with use_repo(self.root), redirect_stdout(out), redirect_stderr(err):
+            with use_repo(self.root), redirect_stdout(out), redirect_stderr(err), \
+                    patch.object(cli.ports_mod, "guard_port", return_value="/dev/ttyACM0"):
                 code = cli.main(argv)
         finally:
             cli.Runner = saved  # type: ignore[assignment]

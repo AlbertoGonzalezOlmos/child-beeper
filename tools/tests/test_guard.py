@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import os
 import unittest
+from unittest.mock import patch
 from contextlib import redirect_stderr, redirect_stdout
 
 import support
@@ -56,6 +57,17 @@ class TestPortListing(TempRepoTest):
         self.assertIn("/dev/ttyACM0", message)
         self.assertIn("/dev/ttyACM1", message)
         self.assertIn("--port", message)
+
+    def test_macos_usb_ports_and_unrelated_devices(self) -> None:
+        for name in ("/dev/cu.usbmodem1101", "/dev/cu.usbserial-123",
+                     "/dev/tty.usbmodem1101"):
+            self.assertTrue(ports.is_serial_device_name(name))
+        for name in ("/dev/cu.Bluetooth-Incoming-Port", "/dev/cu.debug-console", "/dev/null"):
+            self.assertFalse(ports.is_serial_device_name(name))
+        os.environ.pop("CB_FORCE_NO_PORTS", None)
+        with patch.object(ports.glob, "glob", side_effect=lambda pattern:
+                          ["/dev/cu.usbmodem1101"] if pattern == "/dev/cu.usbmodem*" else []):
+            self.assertEqual(ports.list_ports(), ["/dev/cu.usbmodem1101"])
 
 
 class TestGuardsRunBeforeBuild(TempRepoTest):

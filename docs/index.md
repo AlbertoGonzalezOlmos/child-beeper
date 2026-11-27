@@ -20,6 +20,8 @@ top of a reusable BSP (`components/cb_bsp`) — on both ESP-IDF v6.1 and Arduino
 
 | Doc | What it answers |
 |---|---|
+| [messaging.md](messaging.md) | Root app: Wi-Fi messages, blue/yellow heartbeat, button replies, clock, daily visual alarm and local protocol |
+| [Android app](../android/README.md) | Build/install the native companion, pair and exchange messages on the LAN |
 | [hardware.md](hardware.md) | Pin map, LCD x-gap 34, strapping-pin warnings, battery math, no-touch input model |
 | [idf.md](idf.md) | Environment, `./cb` usage, raw `idf.py`, project pattern, partitions, offline builds |
 | [api.md](api.md) | Frozen BSP API: `cb_bsp_init` + part bitmask + error policy, pins/math/FSM/QMI headers |
@@ -55,7 +57,8 @@ With a board attached (first session done 2026-11-08 — checklist in
 
 ```
 cb                            # bash shim → tools/cb.py (Python 3 stdlib CLI)
-CMakeLists.txt  main/         # root IDF app ("hello beeper")
+CMakeLists.txt  main/         # root IDF messenger, clock and alarm
+android/                     # native Android Wi-Fi companion
 components/cb_bsp/            # the BSP: CMakeLists, include/ (frozen headers), src/
                               #   item 2: cb_lcd/cb_backlight/cb_pattern
                               #   item 3: cb_rgb/cb_button/cb_battery + pure math
@@ -80,6 +83,7 @@ arduino/                      # item 7: CBBoard umbrella + mirror.txt; rgb_blink
 
 | Feature | BSP module | Example | Build-verified | Hardware-verified |
 |---|---|---|---|---|
+| Wi-Fi messenger, clock, daily visual alarm, Android companion | Root app over frozen BSP APIs | root app + `android/` | **2026-11-27:** all seven IDF builds, 50 host tests, 230 CLI tests; Android build/lint | **✓ Xiaomi ↔ ESP32:** discovery, pairing, message receipt, time sync, alarm event received and dismissed; colors/physical gestures pending. See [verification](verification.md#messenger--android-session--2026-11-27). |
 | Lifecycle/version | `cb_bsp_init` | root app | item 1 | ✓ boot + console + 11 min soak (2026-11-08) |
 | Pins/math/FSM/QMI regs (pure, host-tested) | `cb_pins.h`, `cb_math`, `cb_button_fsm`, `cb_qmi8658_regs` | `tests/host` | item 1 | n/a (logic) |
 | LCD + LVGL 9.5 + backlight + pattern | `cb_lcd`, `cb_backlight`, `cb_pattern` | `01_lcd_hello` diagnostic | item 2 (2026-11-08) | ✓ serial 2026-11-23 (init, backlight hook, 12 frames); visuals PENDING |

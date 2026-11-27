@@ -8,13 +8,14 @@
  * partition; the image is generated at build time from the repo-root
  * wifi_settings.txt and flashed together with the app (main/CMakeLists.txt +
  * ./flash.sh). Everything here is non-fatal: with no credentials, or on any
- * failure, Wi-Fi just stays off and the beeper app keeps running (contract:
+ * initialization failure, the beeper app keeps running (contract:
  * optional parts never abort the process).
  */
 #ifndef WIFI_STA_H
 #define WIFI_STA_H
 
 #include <stddef.h>
+#include <stdbool.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -31,9 +32,9 @@ void wifi_sta_init(void);
 /**
  * @brief If credentials were loaded, bring up the Wi-Fi station and connect.
  *        The work runs in its own task: this returns immediately and the
- *        caller's heartbeat keeps ticking. @p timeout_ms bounds the wait for
- *        an IP address; a late DHCP answer (after the timeout) still flips
- *        the reported state to connected.
+ *        caller's heartbeat keeps ticking. @p timeout_ms bounds each wait for
+ *        an IP address. Disconnections clear the address immediately and the
+ *        worker retries after five seconds, including after router restarts.
  */
 void wifi_sta_connect(uint32_t timeout_ms);
 
@@ -42,6 +43,9 @@ void wifi_sta_connect(uint32_t timeout_ms);
  *        "wifi=connected 192.168.1.23". Never longer than @p len - 1 chars.
  */
 void wifi_sta_describe(char *buf, size_t len);
+
+/** Current IPv4 address, or false while disconnected. Thread-safe. */
+bool wifi_sta_address(char *buf, size_t len);
 
 #ifdef __cplusplus
 }

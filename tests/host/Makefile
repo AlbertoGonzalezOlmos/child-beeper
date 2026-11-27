@@ -13,11 +13,14 @@ RUN_TESTS := $(HOST_BUILD_DIR)/run_tests
 CC ?= cc
 CPPFLAGS ?=
 CPPFLAGS += -I$(REPO_ROOT)/components/cb_bsp/include
+CPPFLAGS += -I$(REPO_ROOT)/main
 CFLAGS ?= -std=c99 -O0 -g -Wall -Wextra -Werror -pedantic
 LDFLAGS ?=
 LDLIBS ?=
 
 TEST_SOURCES := \
+	$(REPO_ROOT)/main/design_model.c \
+	$(REPO_ROOT)/main/beeper_model.c \
 	$(REPO_ROOT)/tests/host/test_main.c \
 	$(REPO_ROOT)/components/cb_bsp/src/cb_math.c \
 	$(REPO_ROOT)/components/cb_bsp/src/cb_button_fsm.c \
@@ -27,6 +30,8 @@ TEST_SOURCES := \
 	$(REPO_ROOT)/components/cb_bsp/src/cb_imu_math.c
 
 TEST_HEADERS := \
+	$(REPO_ROOT)/main/design_model.h \
+	$(REPO_ROOT)/main/beeper_model.h \
 	$(REPO_ROOT)/components/cb_bsp/include/cb_pins.h \
 	$(REPO_ROOT)/components/cb_bsp/include/cb_math.h \
 	$(REPO_ROOT)/components/cb_bsp/include/cb_button_fsm.h \

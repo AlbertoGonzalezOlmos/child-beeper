@@ -9,16 +9,18 @@ import stat
 
 from .errors import BoardError, UsageError
 
-PORT_GLOBS = ("/dev/ttyACM*", "/dev/ttyUSB*")
+# Use macOS callout devices for discovery, avoiding duplicate cu/tty entries.
+PORT_GLOBS = ("/dev/ttyACM*", "/dev/ttyUSB*", "/dev/cu.usbmodem*", "/dev/cu.usbserial*")
 
 FORCE_NO_PORTS_ENV = "CB_FORCE_NO_PORTS"
 
 HINT = (
-    "cb: no usable serial port found (looked for /dev/ttyACM*, /dev/ttyUSB*).\n"
+    "cb: no usable serial port found (looked for /dev/ttyACM*, /dev/ttyUSB*, "
+    "/dev/cu.usbmodem*, /dev/cu.usbserial*).\n"
     "cb: the board is not connected, or the cable is charge-only.\n"
     "  1. connect the board with a USB-C data cable\n"
     "  2. if it does not enumerate: hold BOOT, tap RESET, release BOOT (download mode)\n"
-    "  3. check `dmesg | tail` and that your user is in the `dialout` group\n"
+    "  3. Linux: check `dmesg | tail` and the `dialout` group; macOS: check System Information > USB\n"
     "  4. then: ./cb ports"
 )
 
@@ -44,11 +46,12 @@ def is_char_device(device: str) -> bool:
         return False
 
 
-SERIAL_NAME_PATTERNS = ("ttyACM*", "ttyUSB*")
+SERIAL_NAME_PATTERNS = ("ttyACM*", "ttyUSB*", "cu.usbmodem*", "cu.usbserial*",
+                        "tty.usbmodem*", "tty.usbserial*")
 
 
 def is_serial_device_name(device: str) -> bool:
-    """Only /dev/ttyACM* and /dev/ttyUSB* may be used as a board port."""
+    """Accept USB serial names on Linux/macOS, excluding unrelated character devices."""
     return any(fnmatch.fnmatch(os.path.basename(device), pattern) for pattern in SERIAL_NAME_PATTERNS)
 
 
@@ -58,7 +61,7 @@ def guard_port(explicit: str | None = None) -> str:
         if not is_serial_device_name(explicit):
             raise UsageError(
                 f"--port {explicit} is not a serial board port "
-                f"(expected /dev/ttyACM* or /dev/ttyUSB*)."
+                f"(expected a Linux ttyACM/ttyUSB or macOS cu.usbmodem/cu.usbserial device)."
             )
         if not os.path.exists(explicit):
             raise BoardError(f"cb: requested port {explicit} does not exist.\n" + HINT)

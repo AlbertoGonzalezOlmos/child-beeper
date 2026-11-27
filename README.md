@@ -6,6 +6,11 @@ addressable RGB LED, BOOT button, battery ADC, TF slot, native USB-Serial/JTAG):
 support package (`components/cb_bsp`) plus one example per peripheral, and an Arduino path whose
 umbrella-only CBBoard library stages the same canonical pins/pure helpers at build time (item 7).
 
+The root app is a **Wi-Fi messenger, clock and daily visual alarm**. Incoming messages
+appear on the LCD while the side light pulses blue/yellow. Use BOOT for preset replies
+and alarm setup, or the [Android companion app](android/README.md) to type messages,
+sync the clock and manage alarms. See [the messaging guide](docs/messaging.md).
+
 ## Quickstart (board optional)
 
 ```bash
@@ -29,9 +34,10 @@ umbrella-only CBBoard library stages the same canonical pins/pure helpers at bui
 The root app connects to the network named in **`wifi_settings.txt`** (repo root; created from
 `wifi_settings.example.txt` on the first `./flash.sh` run). The build embeds the file into the FAT
 `storage` partition and flashes it with the app, so the flow is: edit `wifi_settings.txt` →
-`./flash.sh`. With no SSID configured (or on any failure) the app keeps running with Wi-Fi off —
-the heartbeat line shows `wifi=off` / `wifi=connecting` / `wifi=connected <ip>` / `wifi=failed`.
-The file is gitignored, so real passwords never land in git.
+`./flash.sh`. With no SSID configured, Wi-Fi stays off; initialization failures never stop
+the app. The serial status shows `wifi=off` / `wifi=connecting` / `wifi=connected <ip>` / `wifi=failed`.
+The worker reconnects automatically after network loss. The file is gitignored, so real
+passwords never land in git; local FAT build images contain them and should stay private.
 
 See [docs/index.md](docs/index.md) for the full documentation map (hardware, ESP-IDF, Arduino,
 flashing, API, verification, troubleshooting) and [AGENTS.md](AGENTS.md) for working rules.
@@ -42,7 +48,7 @@ checklist there records what has actually been observed on the board.
 
 ## Layout
 
-`main/` root "hello beeper" app · `components/cb_bsp/` the BSP · `examples/` per-peripheral
+`main/` messenger/clock/alarm app · `android/` companion app · `components/cb_bsp/` the BSP · `examples/` per-peripheral
 firmware (`examples/01_lcd_hello` is the canonical project pattern) · `config/` shared board
 defaults + partition table · `tests/host/` host-compiled unit tests · `tools/` the `./cb` CLI ·
 `docs/` · `arduino/` CBBoard umbrella/manifest and the `rgb_blink` / `button_events` sketches

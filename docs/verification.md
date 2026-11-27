@@ -21,6 +21,84 @@ This repo distinguishes two levels of proof, and every doc/report must say which
 
 Rule (also in `AGENTS.md`): *never claim hardware-verified without a board.*
 
+## Messenger / Android session — 2026-11-27
+
+The root app now contains Wi-Fi messaging, a blue/yellow notification heartbeat,
+a clock and a persistent daily visual alarm. Usage and limits are in
+[messaging.md](messaging.md).
+
+**Build and host verification**
+
+- ESP-IDF **v6.1** root firmware builds. The root lock adds pinned
+  `espressif/cjson` **1.7.19**; BSP public interfaces and pins are unchanged.
+- **50 host tests pass**, including bounded UTF-8 message retention, daily alarms,
+  local offsets, backward clock changes, dismissal, automatic expiry and the
+  double-pulse envelope.
+- **230 CLI tests pass** after removing assumptions that a Linux board port and
+  installed Arduino tools exist on every test host. The macOS stream deadline
+  test also exposed a child process retaining stdout; stream cleanup now stops
+  the owned process group.
+- `android/gradlew -p android assembleDebug lintDebug` passes using JDK 17,
+  Android platform 35 and the pinned Gradle wrapper.
+- `CB_BUILD_ROOT=build/devin ./cb verify --no-arduino` finishes with **15 pass,
+  0 fail, 1 skip**: all seven IDF projects build, configuration/partition and
+  dependency audits pass, and no-board guards pass. Arduino compilation and pin
+  drift are explicitly excluded; the Arduino library/sketches are unchanged.
+  Local reports: `build/devin/verify-report.{md,json}`.
+
+**Observed on the attached ESP32-S3**
+
+- Flashing through `/dev/cu.usbmodem1101` succeeds with verified image hashes.
+  The CLI now discovers macOS USB callout ports and excludes Bluetooth/debug
+  console ports.
+- Serial records `cb_lcd: first frame done: backlight 100%`. The initial 5 GHz
+  network produced **reason 201** (`WIFI_REASON_NO_AP_FOUND`); after the user
+  changed its band to 2.4 GHz, the existing reconnect worker associated without
+  reflashing credentials. Serial then reports `wifi=connected ... clock=synced`.
+- NTP synchronized the clock before any phone clock write. The paired phone also
+  successfully sets UTC time and the local offset.
+- The pairing identity survived four captured firmware boots/reflashes.
+- Credentials were neither printed nor committed. Local FAT build images and
+  serial setup logs remain private, ignored artifacts under `build/devin/`.
+
+**Observed on the Xiaomi 17 and physical beeper**
+
+- The debug APK installs and launches over authorized USB debugging. The app
+  pairs with the board and successfully discovers it using **UDP broadcast**.
+- Sending **“Hello from the Xiaomi!”** in the app creates the matching message
+  on the ESP32 and activates its unread notification state. Acknowledgement clears
+  that state.
+- Real HTTP checks through the phone verify 401 for missing/wrong pairing codes,
+  and 400 for blank, oversized, invalid-type, embedded-NUL and malformed-Unicode
+  messages; fractional/out-of-range clock values; and invalid alarm fields.
+- The app's native time picker saved an alarm for **13:54**. The ESP32 fired at
+  that minute and published a device-originated `Alarm 13:54` message. The phone
+  displayed **Ringing**. Its **Stop alarm / mark read** button dismissed the alarm,
+  and the alarm stayed dismissed within the same minute. Previous alarm settings
+  were restored after the test.
+- The phone's conversation contains the device's `Alarm 13:54` message. The board
+  retained the same boot ID throughout the live tests, and the flashed ELF hash
+  matches the final verified build. No physical BOOT preset reply was observed;
+  that gesture remains in the manual checklist below.
+- The Android emulator also exercised pairing rejection, clock sync, sending,
+  displaying replies, time selection, enabling and acknowledging alarms against
+  a local protocol fixture. These emulator checks are separate from the real
+  phone/board evidence above.
+- Environment note: HTTP/UDP requests from this Mac timed out before reaching
+  the board's handlers, while the same requests from the phone worked. The Mac
+  has managed network extensions; the exact host-side cause was not established.
+  Hardware network tests therefore ran directly through the phone's Wi-Fi.
+
+**Still hardware-pending**
+
+- LCD readability/scrolling, visible blue/yellow colors and pulse shape, screen
+  alarm flashing, and physical BOOT reply/alarm-edit gestures need observation.
+- Alarm-setting retention after a full power cycle (settings are committed to
+  NVS, but this session did not power-cycle a configured alarm). Message history
+  is intentionally RAM-only and is cleared by a restart.
+
+The installed APK is built at `android/app/build/outputs/apk/debug/app-debug.apk`.
+
 ## Hardware status (measured 2026-11-08, board on `/dev/ttyACM0`)
 
 **hardware-VERIFIED**

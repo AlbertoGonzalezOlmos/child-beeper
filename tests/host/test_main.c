@@ -13,6 +13,8 @@
 #include "cb_rgb_math.h"
 #include "cb_battery_math.h"
 #include "cb_imu_math.h"
+#include "beeper_model.h"
+#include "design_model.h"
 
 static int tests_run;
 static int tests_failed;
@@ -1092,6 +1094,170 @@ static void test_imu_math_decode_int16_min(void)
     CHECK_CLOSE(-8.0f / 32768.0f, out.ax_g);
 }
 
+static void test_message_validation_and_retention(void)
+{
+    beeper_model_t model;
+    beeper_model_init(&model);
+    CHECK(!beeper_text_valid(NULL));
+    CHECK(!beeper_text_valid(""));
+    CHECK(!beeper_text_valid(" \t\n"));
+    CHECK(!beeper_text_valid("\xc0\xaf")); /* overlong UTF-8 */
+    CHECK(!beeper_text_valid("\xed\xa0\x80")); /* surrogate */
+    CHECK(!beeper_text_valid("\xf4\x90\x80\x80")); /* above Unicode range */
+    CHECK(!beeper_text_valid("\xe2\x82")); /* incomplete */
+    CHECK(!beeper_text_valid("hello\x01"));
+    CHECK(beeper_text_valid("Hola \xc3\xb1\nHello"));
+    char text[BEEPER_TEXT_MAX + 2];
+    memset(text, 'a', sizeof(text));
+    text[BEEPER_TEXT_MAX + 1] = 0;
+    CHECK(!beeper_model_message(&model, text, false, 0));
+    text[BEEPER_TEXT_MAX] = 0;
+    CHECK(beeper_model_message(&model, text, false, 0));
+    CHECK(model.unread);
+    CHECK_INT(1, model.notification_id);
+    CHECK_INT(0, model.messages[0].epoch);
+    beeper_model_ack(&model);
+    CHECK(!model.unread);
+    for (unsigned i = 0; i < BEEPER_HISTORY + 3; ++i)
+        CHECK(beeper_model_message(&model, "reply", true, BEEPER_CLOCK_MIN));
+    CHECK_INT(BEEPER_HISTORY, model.count);
+    CHECK_INT(5, model.messages[0].id);
+    CHECK_INT(20, model.messages[BEEPER_HISTORY - 1].id);
+    CHECK(!model.unread);
+    CHECK_INT(1, model.notification_id);
+}
+
+static void test_daily_alarm_and_clock_changes(void)
+{
+    beeper_model_t model;
+    beeper_model_init(&model);
+    model.alarm.enabled = true;
+    model.alarm.hour = 1;
+    model.alarm.minute = 30;
+    model.utc_offset_minutes = 90;
+    CHECK(!beeper_model_tick(&model, 0, 100)); /* no clock */
+    CHECK(beeper_model_tick(&model, BEEPER_CLOCK_MIN, 1000));
+    CHECK_INT(61000, model.ringing_until_ms);
+    CHECK(!beeper_model_tick(&model, BEEPER_CLOCK_MIN + 10, 11000));
+    beeper_model_ack(&model);
+    CHECK(!beeper_model_tick(&model, BEEPER_CLOCK_MIN + 20, 21000)); /* dismiss stays quiet */
+    CHECK(!beeper_model_tick(&model, BEEPER_CLOCK_MIN - 60, 22000)); /* backwards */
+    CHECK(!beeper_model_tick(&model, BEEPER_CLOCK_MIN, 23000));
+    CHECK(beeper_model_tick(&model, BEEPER_CLOCK_MIN + 86400, 90000));
+    CHECK(!beeper_model_tick(&model, BEEPER_CLOCK_MIN + 86460, 150000));
+    CHECK_INT(0, model.ringing_until_ms); /* auto stop */
+    model.alarm.enabled = false;
+    CHECK(!beeper_model_tick(&model, BEEPER_CLOCK_MIN + 172800, 160000));
+    model.alarm.enabled = true;
+    model.utc_offset_minutes = -30;
+    model.alarm.hour = 23;
+    model.alarm.minute = 30;
+    CHECK(beeper_model_tick(&model, BEEPER_CLOCK_MIN + 172800, 170000)); /* local previous day */
+}
+
+static void test_heartbeat_double_pulse(void)
+{
+    CHECK_INT(0, beeper_heartbeat_mix(0));
+    CHECK_INT(255, beeper_heartbeat_mix(180));
+    CHECK_INT(0, beeper_heartbeat_mix(360));
+    CHECK_INT(255, beeper_heartbeat_mix(640));
+    CHECK_INT(0, beeper_heartbeat_mix(820));
+    CHECK_INT(0, beeper_heartbeat_mix(1400));
+    for (unsigned i = 1; i < 180; ++i)
+        CHECK(beeper_heartbeat_mix(i) >= beeper_heartbeat_mix(i - 1));
+}
+
+static void test_expansion_gpio_conflicts(void)
+{
+    design_hardware_t h = {
+        .buttons = {{2, DESIGN_NEXT_REPLY, true}, {4, DESIGN_SEND_REPLY, true},
+                    {5, DESIGN_ACK, true}, {6, DESIGN_EDIT_ALARM, true}},
+        .motor_gpio = 7, .speaker = true, .microphone = true,
+        .bclk = 8, .ws = 9, .dout = 10, .din = 11,
+    };
+    CHECK(design_hardware_valid(&h));
+    h.din = h.motor_gpio;
+    CHECK(!design_hardware_valid(&h));
+    h.din = 11;
+    for (int gpio = 0; gpio <= 48; ++gpio) {
+        CHECK_INT(gpio == 2 || (gpio >= 4 && gpio <= 11), design_gpio_available(gpio));
+    }
+    h.motor_gpio = CB_PIN_LCD_BL;
+    CHECK(!design_hardware_valid(&h));
+    h.motor_gpio = -1;
+    h.buttons[1].gpio = h.buttons[0].gpio;
+    CHECK(!design_hardware_valid(&h));
+    for (size_t i = 0; i < DESIGN_MAX_BUTTONS; ++i) h.buttons[i].gpio = -1;
+    h.speaker = h.microphone = false;
+    CHECK(design_hardware_valid(&h)); /* Disabled channels never claim pins. */
+}
+
+static void test_designed_effect_boundaries(void)
+{
+    design_step_t steps[] = {
+        {.duration_ms=100, .color=0x0000ff, .brightness=100, .frequency=440,
+         .screen=true, .screen_color=0, .blend=true, .wave=DESIGN_SINE},
+        {.duration_ms=200, .color=0xffff00, .brightness=50, .vibration=100,
+         .frequency=880, .volume=20, .screen=true, .screen_color=0xffffff},
+    };
+    design_sequence_t sequence = {steps, 2, true};
+    design_effect_t effect;
+    design_effect(&sequence, 50, &effect);
+    CHECK_INT(0x7f7f80, effect.color);
+    CHECK_INT(50, effect.vibration);
+    CHECK_INT(660, effect.frequency);
+    CHECK_INT(10, effect.volume);
+    CHECK_INT(75, effect.brightness);
+    CHECK_INT(0x7f7f7f, effect.screen_color);
+    design_effect(&sequence, 100, &effect);
+    CHECK_INT(0xffff00, effect.color);
+    design_effect(&sequence, 300, &effect);
+    CHECK_INT(0x0000ff, effect.color);
+    sequence.loop = false;
+    design_effect(&sequence, 300, &effect);
+    CHECK_INT(0, effect.vibration);
+    CHECK_INT(0, effect.volume);
+    CHECK_INT(0, effect.brightness);
+    CHECK(!effect.screen);
+    design_effect(&sequence, UINT64_MAX, &effect);
+    CHECK_INT(0, effect.volume);
+    steps[0].duration_ms = steps[1].duration_ms = 0;
+    design_effect(&sequence, 0, &effect);
+    CHECK_INT(0, effect.brightness);
+}
+
+static void test_designed_animation_pose(void)
+{
+    const design_key_t keys[] = {{0, -10, 0, 255}, {100, 10, 20, 55}};
+    design_layer_t layer = {.x=8, .y=12, .opacity=200, .period_ms=200,
+                            .keys=keys, .key_count=2};
+    design_pose_t pose;
+    design_pose(&layer, 50, &pose);
+    CHECK_INT(0, pose.x);
+    CHECK_INT(10, pose.y);
+    CHECK_INT(155, pose.opacity);
+    design_pose(&layer, 150, &pose);
+    CHECK_INT(10, pose.x);
+    design_pose(&layer, 200, &pose);
+    CHECK_INT(-10, pose.x);
+    layer.key_count = 0;
+    design_pose(&layer, 100, &pose);
+    CHECK_INT(8, pose.x);
+    CHECK_INT(12, pose.y);
+    CHECK_INT(200, pose.opacity);
+}
+
+static void test_designed_gif_timing(void)
+{
+    const uint32_t durations[] = {50, 100, 200};
+    CHECK_INT(0, design_frame(durations, 3, 49));
+    CHECK_INT(1, design_frame(durations, 3, 50));
+    CHECK_INT(1, design_frame(durations, 3, 149));
+    CHECK_INT(2, design_frame(durations, 3, 150));
+    CHECK_INT(0, design_frame(durations, 3, 350));
+    CHECK_INT(0, design_frame(NULL, 0, 1));
+}
+
 int main(void)
 {
     run_test(test_pins_lcd, "pins LCD and RGB contract");
@@ -1141,6 +1307,13 @@ int main(void)
     run_test(test_imu_math_decode_layout, "imu decode burst layout");
     run_test(test_imu_math_decode_invalid, "imu decode invalid input, out untouched");
     run_test(test_imu_math_decode_int16_min, "imu decode INT16_MIN without UB");
+    run_test(test_message_validation_and_retention, "message UTF-8 validation and bounded history");
+    run_test(test_daily_alarm_and_clock_changes, "daily alarm, offset, dismissal and clock changes");
+    run_test(test_heartbeat_double_pulse, "blue-yellow heartbeat double pulse");
+    run_test(test_expansion_gpio_conflicts, "expansion pins exclude board wiring and duplicate assignments");
+    run_test(test_designed_effect_boundaries, "designed effects interpolate, loop and stop all outputs");
+    run_test(test_designed_animation_pose, "designed position and opacity keyframes");
+    run_test(test_designed_gif_timing, "variable GIF frame durations and loop boundaries");
 
     printf("1..%d\n", tests_run);
     printf("# failed %d\n", tests_failed);

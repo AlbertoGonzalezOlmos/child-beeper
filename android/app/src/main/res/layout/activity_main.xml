@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/page" android:layout_width="match_parent"
+    android:layout_height="match_parent" android:fillViewport="true">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="vertical" android:padding="20dp">
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="@string/app_name" android:textSize="32sp" android:textStyle="bold" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="@string/subtitle" android:textSize="16sp" android:textColor="#ABC0D0" />
+        <TextView style="@style/SectionTitle" android:text="@string/connection" />
+        <EditText android:id="@+id/address" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:hint="@string/address_hint"
+            android:inputType="textUri" android:singleLine="true" android:autofillHints=""
+            android:importantForAutofill="no" />
+        <EditText android:id="@+id/pair_code" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:hint="@string/pair_hint"
+            android:inputType="numberPassword" android:maxLength="6"
+            android:importantForAutofill="no" />
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="horizontal">
+            <Button android:id="@+id/find" android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content" android:text="@string/find" />
+            <Button android:id="@+id/connect" android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content" android:text="@string/connect" />
+        </LinearLayout>
+        <TextView android:id="@+id/status" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:text="@string/initial_status"
+            android:textColor="#FFDB61" android:accessibilityLiveRegion="polite" />
+        <TextView style="@style/SectionTitle" android:text="@string/conversation" />
+        <TextView android:id="@+id/history" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:minHeight="100dp"
+            android:padding="12dp" android:background="#1B2A37" android:textSize="16sp"
+            android:textIsSelectable="true" android:text="@string/empty_messages" />
+        <EditText android:id="@+id/message" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:hint="@string/message_hint"
+            android:inputType="textMultiLine|textCapSentences" android:maxLines="4"
+            android:maxLength="240" android:importantForAutofill="no" />
+        <Button android:id="@+id/send" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:text="@string/send" />
+        <TextView style="@style/SectionTitle" android:text="@string/alarm" />
+        <TextView android:id="@+id/clock" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:textSize="18sp"
+            android:text="@string/clock_waiting" />
+        <Button android:id="@+id/set_alarm" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:text="@string/set_alarm" />
+        <Button android:id="@+id/toggle_alarm" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:text="@string/enable_alarm" />
+        <Button android:id="@+id/dismiss" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:text="@string/dismiss" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="16dp" android:textColor="#ABC0D0"
+            android:text="@string/footnote" />
+    </LinearLayout>
+</ScrollView>

@@ -35,7 +35,6 @@ static const char *TAG = "wifi_sta";
 #define MOUNT_POINT      "/spiflash"
 #define PARTITION_LABEL  "storage"
 #define SETTINGS_PATH    MOUNT_POINT "/wifi_settings.txt"
-#define CONNECT_RETRIES  5
 #define WIFI_TASK_STACK  4096
 
 typedef enum {
@@ -55,7 +54,14 @@ static char s_password[64];    /* WPA2-PSK limit is 63 bytes */
 static bool s_credentials;
 static bool s_stack_up;
 static esp_ip4_addr_t s_ip;
-static int  s_retry;
+static portMUX_TYPE s_status_lock = portMUX_INITIALIZER_UNLOCKED;
+
+static void set_state(wifi_sta_state_t state)
+{
+    portENTER_CRITICAL(&s_status_lock);
+    s_state = state;
+    portEXIT_CRITICAL(&s_status_lock);
+}
 
 /* ---- settings parsing ----------------------------------------------------- */
 
@@ -95,8 +101,7 @@ static bool parse_line(char *line, const char **key, const char **value)
     return (*key)[0] != '\0' && (*value)[0] != '\0';
 }
 
-/* Read ssid/password from SETTINGS_PATH. Logs the SSID but never the
- * password (only its length). */
+/* Keep credentials out of console output. */
 static bool load_settings(void)
 {
     FILE *f = fopen(SETTINGS_PATH, "r");
@@ -108,6 +113,7 @@ static bool load_settings(void)
                  "(edit wifi_settings.txt and re-run ./flash.sh)", SETTINGS_PATH);
         return false;
     }
+    bool valid = true;
     while (fgets(line, sizeof(line), f) != NULL) {
         const char *key;
         const char *value;
@@ -115,9 +121,11 @@ static bool load_settings(void)
             continue;
         }
         if (strcmp(key, "ssid") == 0) {
+            if (strlen(value) > 32) valid = false;
             snprintf(s_ssid, sizeof(s_ssid), "%s", value);
             got_ssid = true;
         } else if (strcmp(key, "password") == 0) {
+            if (strlen(value) > 63) valid = false;
             snprintf(s_password, sizeof(s_password), "%s", value);
         }
     }
@@ -128,8 +136,11 @@ static bool load_settings(void)
                  "(edit wifi_settings.txt and re-run ./flash.sh)");
         return false;
     }
-    ESP_LOGI(TAG, "settings loaded: ssid=\"%s\" (password %zu chars)",
-             s_ssid, strlen(s_password));
+    if (!valid || strlen(s_password) < 8 || strcmp(s_password, "YOUR_PASSWORD") == 0) {
+        ESP_LOGW(TAG, "invalid SSID/password length — check wifi_settings.txt");
+        return false;
+    }
+    ESP_LOGI(TAG, "Wi-Fi settings loaded");
     return true;
 }
 
@@ -144,7 +155,7 @@ static bool mount_settings_partition(void)
 {
     const esp_vfs_fat_mount_config_t cfg = {
         .format_if_mount_failed = false,
-        .max_files              = 2,
+        .max_files              = 12, /* Settings plus up to eight designer image streams. */
         .allocation_unit_size   = CONFIG_WL_SECTOR_SIZE,
         .use_one_fat            = false,
     };
@@ -166,21 +177,21 @@ static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *da
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
         esp_wifi_connect();
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
-        if (s_retry < CONNECT_RETRIES) {
-            s_retry++;
-            ESP_LOGI(TAG, "connect attempt failed (%d/%d), retrying…",
-                     s_retry, CONNECT_RETRIES);
-            esp_wifi_connect();
-        } else {
-            ESP_LOGW(TAG, "giving up after %d attempts", CONNECT_RETRIES);
-            s_state = WIFI_STA_FAILED;
-            xEventGroupSetBits(s_evt, BIT_FAIL);
-        }
+        const wifi_event_sta_disconnected_t *disconnected = data;
+        ESP_LOGW(TAG, "disconnected (reason %u); will retry", disconnected->reason);
+        portENTER_CRITICAL(&s_status_lock);
+        s_state = WIFI_STA_CONNECTING;
+        s_ip.addr = 0;
+        portEXIT_CRITICAL(&s_status_lock);
+        xEventGroupClearBits(s_evt, BIT_GOT_IP);
+        xEventGroupSetBits(s_evt, BIT_FAIL);
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         const ip_event_got_ip_t *evt = (const ip_event_got_ip_t *)data;
+        portENTER_CRITICAL(&s_status_lock);
         s_ip = evt->ip_info.ip;
-        s_retry = 0;
         s_state = WIFI_STA_CONNECTED;   /* also flips state after a late DHCP answer */
+        portEXIT_CRITICAL(&s_status_lock);
+        xEventGroupClearBits(s_evt, BIT_FAIL);
         xEventGroupSetBits(s_evt, BIT_GOT_IP);
     }
 }
@@ -192,7 +203,7 @@ static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *da
         esp_err_t _err = (call);                                               \
         if (_err != ESP_OK) {                                                  \
             ESP_LOGW(TAG, "%s failed: %s", #call, esp_err_to_name(_err));      \
-            s_state = WIFI_STA_FAILED;                                         \
+            set_state(WIFI_STA_FAILED);                                        \
             goto fail;                                                         \
         }                                                                      \
     } while (0)
@@ -205,31 +216,28 @@ static void wifi_task(void *arg)
     esp_err_t err;
 
     err = nvs_flash_init();
-    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        err = nvs_flash_erase();
-        if (err == ESP_OK) {
-            err = nvs_flash_init();
-        }
-    }
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "nvs init failed: %s — Wi-Fi disabled", esp_err_to_name(err));
-        s_state = WIFI_STA_FAILED;
+        set_state(WIFI_STA_FAILED);
         goto fail;
     }
 
     s_evt = xEventGroupCreate();
     if (s_evt == NULL) {
         ESP_LOGE(TAG, "no memory for the event group");
-        s_state = WIFI_STA_FAILED;
+        set_state(WIFI_STA_FAILED);
         goto fail;
     }
 
     WIFI_STA_CHECK(esp_netif_init());
     WIFI_STA_CHECK(esp_event_loop_create_default());
-    esp_netif_create_default_wifi_sta();
+    esp_netif_t *netif = esp_netif_create_default_wifi_sta();
+    if (!netif) goto fail;
+    WIFI_STA_CHECK(esp_netif_set_hostname(netif, "child-beeper"));
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     WIFI_STA_CHECK(esp_wifi_init(&cfg));
+    WIFI_STA_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
 
     esp_event_handler_instance_t instance_any_id;
     esp_event_handler_instance_t instance_got_ip;
@@ -249,21 +257,18 @@ static void wifi_task(void *arg)
     WIFI_STA_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_cfg));
     WIFI_STA_CHECK(esp_wifi_start());
 
-    ESP_LOGI(TAG, "connecting to \"%s\" (waiting up to %lu ms for an IP)",
-             s_ssid, (unsigned long)timeout_ms);
-    EventBits_t bits = xEventGroupWaitBits(s_evt, BIT_GOT_IP | BIT_FAIL,
-                                           pdFALSE, pdFALSE,
-                                           pdMS_TO_TICKS(timeout_ms));
-    if (bits & BIT_GOT_IP) {
-        ESP_LOGI(TAG, "connected — ip: " IPSTR, IP2STR(&s_ip));
-    } else if (bits & BIT_FAIL) {
-        ESP_LOGW(TAG, "could not connect to \"%s\"", s_ssid);
-    } else {
-        /* Timed out; the stack stays up so a late DHCP answer still flips
-         * the state to connected (event handler above). */
-        ESP_LOGW(TAG, "no IP after %lu ms (still listening for DHCP)",
-                 (unsigned long)timeout_ms);
-        s_state = WIFI_STA_FAILED;
+    ESP_LOGI(TAG, "connecting; reconnects automatically after network loss");
+    for (;;) {
+        EventBits_t bits = xEventGroupWaitBits(s_evt, BIT_GOT_IP | BIT_FAIL,
+                                               pdTRUE, pdFALSE, pdMS_TO_TICKS(timeout_ms));
+        char ip[16];
+        if (wifi_sta_address(ip, sizeof(ip))) {
+            if (bits & BIT_GOT_IP) ESP_LOGI(TAG, "connected — ip: %s", ip);
+            continue;
+        }
+        ESP_LOGW(TAG, "no connection; retrying in 5 seconds");
+        vTaskDelay(pdMS_TO_TICKS(5000));
+        if (!wifi_sta_address(ip, sizeof(ip))) esp_wifi_connect();
     }
 fail:
     vTaskDelete(NULL);
@@ -284,23 +289,27 @@ void wifi_sta_connect(uint32_t timeout_ms)
     if (!s_credentials || s_stack_up) {
         return;
     }
-    s_stack_up = true;   /* one connection attempt per boot */
-    s_state = WIFI_STA_CONNECTING;
+    s_stack_up = true;   /* one worker per boot; it reconnects continuously */
+    set_state(WIFI_STA_CONNECTING);
 
     if (xTaskCreate(wifi_task, "wifi_sta", WIFI_TASK_STACK,
                     (void *)(uintptr_t)timeout_ms, tskIDLE_PRIORITY + 2,
                     NULL) != pdPASS) {
         ESP_LOGE(TAG, "failed to create the Wi-Fi task");
-        s_state = WIFI_STA_FAILED;
+        set_state(WIFI_STA_FAILED);
     }
 }
 
 void wifi_sta_describe(char *buf, size_t len)
 {
-    switch (s_state) {
+    portENTER_CRITICAL(&s_status_lock);
+    wifi_sta_state_t state = s_state;
+    esp_ip4_addr_t address = s_ip;
+    portEXIT_CRITICAL(&s_status_lock);
+    switch (state) {
     case WIFI_STA_CONNECTED: {
         char ip[16];
-        esp_ip4addr_ntoa(&s_ip, ip, sizeof(ip));
+        esp_ip4addr_ntoa(&address, ip, sizeof(ip));
         snprintf(buf, len, "wifi=connected %s", ip);
         break;
     }
@@ -314,4 +323,15 @@ void wifi_sta_describe(char *buf, size_t len)
         snprintf(buf, len, "wifi=off");
         break;
     }
+}
+
+bool wifi_sta_address(char *buf, size_t len)
+{
+    portENTER_CRITICAL(&s_status_lock);
+    bool connected = s_state == WIFI_STA_CONNECTED;
+    esp_ip4_addr_t address = s_ip;
+    portEXIT_CRITICAL(&s_status_lock);
+    if (len) buf[0] = 0;
+    if (connected) esp_ip4addr_ntoa(&address, buf, len);
+    return connected;
 }

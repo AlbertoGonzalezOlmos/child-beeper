@@ -11,6 +11,8 @@ The Type-C port is the ESP32-S3's **native USB-Serial/JTAG** peripheral — ther
 bridge chip. Consequences:
 
 - On Linux the board appears as **`/dev/ttyACM*`** (CDC-ACM), not `/dev/ttyUSB*`.
+- On macOS use **`/dev/cu.usbmodem*`**. `./cb ports` discovers it automatically;
+  `./cb flash --port /dev/cu.usbmodem1101` also works. Bluetooth/debug-console ports are excluded.
 - The **same port** carries flashing, the log console, and (after reset) re-enumeration — the port
   may briefly disappear and reappear when the chip resets mid-flash; that is normal.
 - Logs only appear on this port when the firmware selects it: IDF
@@ -41,10 +43,9 @@ Arduino uploads go through `./cb arduino` / the IDE with the same FQBN (item 7+)
   timing-dependent, so ROM/bootstrap/bootloader output and the app's early banner/WARN lines
   **may be dropped**. On 2026-11-23 the monitor captured the `I (683)` banner and `W (684…)`
   warnings, proving that early output is not categorically lost.
-- The root app provides a reliable **one-shot boot summary on its first heartbeat**:
-  `boot summary: reset=… cb_bsp=… init(CB_PART_ALL)=… idf=…`. Use that line when early output is
-  absent. Item 3's examples print ready immediately (no artificial delay); their repeating
-  cycle/sample/alive lines provide later evidence if ready is missed.
+- The root messenger prints its **pairing code after two seconds**, once USB is observable,
+  then logs Wi-Fi, clock, unread and alarm state every ten seconds. The peripheral examples
+  retain their own diagnostic output.
 - `./cb monitor` streams live (`cb: monitoring — press Ctrl-] to quit`; it warns when stdin is not
   a terminal, because then Ctrl-] may not reach the monitor). A raw `cat /dev/ttyACM0` shows the
   same stream (heartbeats every 2 s). `--target <T>` selects which build dir's ELF the monitor
@@ -60,11 +61,11 @@ Arduino uploads go through `./cb arduino` / the IDE with the same FQBN (item 7+)
 attached (or with `CB_FORCE_NO_PORTS=1` set) they print a recovery hint and exit **2**:
 
 ```
-cb: no usable serial port found (looked for /dev/ttyACM*, /dev/ttyUSB*).
+cb: no usable serial port found (looked for /dev/ttyACM*, /dev/ttyUSB*, /dev/cu.usbmodem*, /dev/cu.usbserial*).
 cb: the board is not connected, or the cable is charge-only.
   1. connect the board with a USB-C data cable
   2. if it does not enumerate: hold BOOT, tap RESET, release BOOT (download mode)
-  3. check `dmesg | tail` and that your user is in the `dialout` group
+  3. Linux: check `dmesg | tail` and the `dialout` group; macOS: check System Information > USB
   4. then: ./cb ports
 ```
 

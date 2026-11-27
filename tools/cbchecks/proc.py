@@ -11,6 +11,7 @@ import contextlib
 import fcntl
 import os
 import queue
+import signal
 import subprocess
 import sys
 import threading
@@ -231,6 +232,7 @@ class Runner:
                 text=True,
                 errors="replace",
                 bufsize=1,
+                start_new_session=True,
             )
             lines: list[str] = []
             timed_out = False
@@ -269,17 +271,26 @@ class Runner:
                     if stop is not None and stop(text):
                         break
             finally:
-                if proc.poll() is None:
-                    proc.terminate()
+                # A shell's child can retain stdout after the shell exits (e.g.
+                # bash 3.2 + sleep on macOS). Stop the owned process group so
+                # closing the pipe never waits for an orphaned child.
+                def stop_group(sig):
                     try:
-                        proc.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        proc.kill()
-                reader_done.wait(timeout=2)
+                        os.killpg(proc.pid, sig)
+                    except ProcessLookupError:
+                        pass
+
+                stop_group(signal.SIGTERM)
                 try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    stop_group(signal.SIGKILL)
+                    proc.wait()
+                if not reader_done.wait(timeout=2):
+                    stop_group(signal.SIGKILL)
+                    reader_done.wait(timeout=2)
+                if reader_done.is_set():
                     proc.stdout.close()
-                except OSError:
-                    pass
             return Runner.StreamResult(lines, proc.returncode, timed_out)
 
     def monitor_live(self, args: Sequence[str], *, cwd: Path, timeout: float) -> "Runner.StreamResult":

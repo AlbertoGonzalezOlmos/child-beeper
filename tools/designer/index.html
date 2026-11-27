@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Child Beeper Studio</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Child Beeper Studio home">
+      <span class="brand-icon"><i></i><i></i><i></i></span>
+      <span>Child Beeper <strong>Studio</strong></span>
+    </a>
+    <input id="project-name" aria-label="Project name" maxlength="80" value="Loading project…" disabled>
+    <span id="dirty" class="save-state">Local workspace</span>
+    <div class="top-actions">
+      <button id="import-project" class="quiet">Open</button>
+      <button id="export-project" class="quiet">Export</button>
+      <button id="save-project">Save project</button>
+      <button id="build-project">Build firmware</button>
+      <button id="flash-project" class="primary">Flash device <span>↗</span></button>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <aside class="left-panel">
+      <section class="section">
+        <div class="section-heading"><h2>SCREENS</h2><span class="small-label">3 scenes</span></div>
+        <div id="scene-tabs" class="scene-tabs">
+          <button data-scene="home" class="active"><span>◉</span> Home</button>
+          <button data-scene="message"><span>▤</span> Message</button>
+          <button data-scene="alarm"><span>◷</span> Alarm</button>
+        </div>
+      </section>
+      <section class="section layer-section">
+        <div class="section-heading"><h2>LAYERS</h2><span id="layer-count" class="small-label"></span></div>
+        <div class="add-layer-row">
+          <button id="add-text" title="Add text">T <span>Text</span></button>
+          <button id="add-box" title="Add shape">□ <span>Shape</span></button>
+          <button id="add-image" title="Import image or animated GIF">▧ <span>Image</span></button>
+        </div>
+        <div id="layers" class="layers" aria-label="Scene layers"></div>
+        <div class="layer-actions">
+          <button id="layer-up" title="Bring forward" aria-label="Bring layer forward">↑</button>
+          <button id="layer-down" title="Send backward" aria-label="Send layer backward">↓</button>
+          <button id="duplicate-layer" title="Duplicate selected layer">Duplicate</button>
+          <button id="delete-layer" title="Delete selected layer" class="danger-text">Delete</button>
+        </div>
+      </section>
+      <section class="section assets-section">
+        <div class="section-heading"><h2>ASSETS</h2><span class="small-label">Images · GIFs · fonts</span></div>
+        <div id="assets" class="assets"></div>
+        <button id="import-font" class="wide quiet">＋ Import a font</button>
+      </section>
+      <div class="left-footer">
+        <div class="device-line"><span id="device-dot" class="dot"></span><span id="device-status">Checking USB…</span></div>
+        <select id="port" aria-label="ESP32 serial port"></select>
+        <button id="reset-project" class="text-button">Restore starter design</button>
+      </div>
+    </aside>
+
+    <section class="canvas-panel">
+      <div class="canvas-toolbar">
+        <div><strong id="scene-title">Home screen</strong><span class="dimensions">172 × 320</span></div>
+        <div class="canvas-tools">
+          <button id="undo" title="Undo (⌘/Ctrl Z)" aria-label="Undo">↶</button>
+          <button id="redo" title="Redo (⌘/Ctrl Shift Z)" aria-label="Redo">↷</button>
+          <label><input id="show-grid" type="checkbox"> Grid</label>
+          <label><input id="snap-grid" type="checkbox" checked> Snap</label>
+          <select id="zoom" aria-label="Preview zoom">
+            <option value="1.25">125%</option><option value="1.5">150%</option>
+            <option value="1.75" selected>175%</option><option value="2">200%</option><option value="2.5">250%</option>
+          </select>
+        </div>
+      </div>
+      <div class="stage">
+        <div class="stage-note"><span class="live-pill">PREVIEW</span> Drag to position. Drag the corner to resize.</div>
+        <div id="device-frame" class="device-frame">
+          <div id="side-light" class="side-light"></div>
+          <canvas id="screen" width="172" height="320" tabindex="0" aria-label="Interactive beeper screen layout"></canvas>
+          <span class="device-mark">CHILD BEEPER</span>
+        </div>
+        <div class="signal-readouts">
+          <span><i id="led-swatch"></i><strong id="led-value">Blue</strong></span>
+          <span>Vibration <meter id="vibe-meter" min="0" max="100" value="0"></meter><b id="vibe-value">0%</b></span>
+          <button id="listen" class="quiet" title="Play the designed sound on this computer">♫ Listen</button>
+          <span id="sound-value">Silent</span>
+        </div>
+      </div>
+      <div class="timeline">
+        <div class="timeline-top">
+          <button id="play" class="play-button" aria-label="Pause preview">Ⅱ</button>
+          <strong id="time-label">0.00 s</strong>
+          <span class="small-label">Animation &amp; signal preview</span>
+          <button id="restart" class="quiet">Restart</button>
+        </div>
+        <input id="scrubber" type="range" min="0" max="2000" step="10" value="0" aria-label="Preview time">
+        <div class="timeline-labels"><span>0 s</span><span id="duration-label">2 s</span></div>
+        <div id="effect-strip" class="effect-strip" aria-label="Signal sequence timeline"></div>
+      </div>
+      <div id="job-panel" class="job-panel" hidden>
+        <div class="job-heading"><span id="job-indicator" class="dot"></span><strong id="job-phase">Ready</strong>
+          <span id="job-budget"></span><button id="close-job" class="quiet" aria-label="Close build log">×</button></div>
+        <pre id="job-log" aria-live="polite"></pre>
+      </div>
+    </section>
+
+    <aside class="right-panel">
+      <nav class="inspector-tabs" aria-label="Inspector tabs">
+        <button data-panel="layout" class="active">Layout</button>
+        <button data-panel="signals">Signals</button>
+        <button data-panel="hardware">Hardware</button>
+      </nav>
+      <div id="inspector" class="inspector"></div>
+    </aside>
+  </main>
+
+  <footer class="statusbar">
+    <span id="status-text">Loading your workspace…</span>
+    <span>Local project · USB deployment <span class="status-separator">│</span> <span id="output-status">External outputs off</span></span>
+  </footer>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <input id="project-file" type="file" accept=".json,application/json" hidden>
+  <input id="image-file" type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden>
+  <input id="font-file" type="file" accept=".ttf,.otf" hidden>
+
+  <dialog id="asset-dialog">
+    <form id="asset-form">
+      <div class="dialog-heading"><h2 id="asset-heading">Asset settings</h2><button type="button" id="close-asset" class="quiet" aria-label="Close asset settings">×</button></div>
+      <div id="asset-fields"></div>
+      <div class="dialog-actions"><button type="button" id="delete-asset" class="danger-text">Remove asset</button><button class="primary" type="submit">Apply settings</button></div>
+    </form>
+  </dialog>
+</body>
+</html>

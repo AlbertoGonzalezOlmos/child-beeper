@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ENV_DIR="$ROOT/.cache/designer/venv"
+if [[ ! -x "$ENV_DIR/bin/python" ]]; then
+    python3 -m venv "$ENV_DIR"
+fi
+if ! "$ENV_DIR/bin/python" -c 'import PIL; assert PIL.__version__ == "13.0.0"' >/dev/null 2>&1; then
+    "$ENV_DIR/bin/python" -m pip install -r "$ROOT/tools/designer/requirements.txt"
+fi
+exec "$ENV_DIR/bin/python" "$ROOT/tools/designer/server.py" "$@"

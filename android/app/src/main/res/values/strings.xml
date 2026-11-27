@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Child Beeper</string>
+    <string name="subtitle">Little messages. Same Wi-Fi.</string>
+    <string name="connection">Connect your beeper</string>
+    <string name="address_hint">Beeper IP address</string>
+    <string name="pair_hint">6-digit code on the beeper</string>
+    <string name="find">Find on Wi-Fi</string>
+    <string name="connect">Connect</string>
+    <string name="initial_status">Enter the IP and pairing code shown on the beeper, or find it on Wi-Fi.</string>
+    <string name="conversation">Messages</string>
+    <string name="empty_messages">Your conversation will appear here.</string>
+    <string name="message_hint">Write a message…</string>
+    <string name="send">Send message</string>
+    <string name="alarm">Beeper clock &amp; alarm</string>
+    <string name="clock_waiting">Waiting for connection</string>
+    <string name="set_alarm">Set daily alarm</string>
+    <string name="enable_alarm">Enable alarm</string>
+    <string name="disable_alarm">Disable alarm</string>
+    <string name="dismiss">Stop alarm / mark read</string>
+    <string name="footnote">Keep this app open to receive messages live. The beeper keeps the latest 16 messages until it restarts.\n\nOn the beeper: tap BOOT to choose a reply, double-tap to send, or hold to set an alarm. Alarms use the light and screen.</string>
+    <string name="invalid_connection">Enter a valid IPv4 address and the 6-digit pairing code.</string>
+    <string name="connecting">Connecting…</string>
+    <string name="finding">Looking for beepers on this Wi-Fi…</string>
+    <string name="none_found">No beeper found. Enter the IP on its screen. Check both devices use the same Wi-Fi and client isolation is off.</string>
+    <string name="found">Beeper found. Enter its pairing code, then tap Connect.</string>
+    <string name="choose_beeper">Choose a beeper</string>
+    <string name="message_size">Use 1–240 UTF-8 bytes of visible text.</string>
+    <string name="connect_first">Connect to a beeper first.</string>
+    <string name="saved">Alarm saved on the beeper.</string>
+    <string name="not_confirmed">Delivery not confirmed. Check the conversation before retrying.</string>
+    <string name="disconnected">Connection lost. Retrying while this app is open…</string>
+    <string name="connected">Connected · %1$s</string>
+    <string name="clock_status">Beeper time: %1$s\nDaily alarm: %2$s · %3$s</string>
+    <string name="alarm_on">On</string>
+    <string name="alarm_off">Off</string>
+    <string name="alarm_ringing">Ringing</string>
+    <string name="you">You</string>
+    <string name="beeper">Beeper</string>
+    <string name="sent">Delivered to beeper</string>
+    <string name="pairing_error">Pairing code rejected. Check the code on the beeper and connect again.</string>
+    <string name="error">Could not connect: %1$s</string>
+    <string name="invalid_message">The beeper rejected the request. Check your message or settings.</string>
+</resources>

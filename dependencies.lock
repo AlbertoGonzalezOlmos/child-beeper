@@ -13,6 +13,16 @@ dependencies:
       path: components/cb_bsp
       type: local
     version: '*'
+  espressif/cjson:
+    component_hash: 9372811fb197926f522c467627cf4a8e72b681e0366e17879631da801103aef3
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.7.19
   espressif/esp_lvgl_port:
     component_hash: d3c020b45c3dfc0d1706a83b63a1c34a6eb444a6e935f9afff79f92b7b94dcef
     dependencies:
@@ -50,10 +60,11 @@ dependencies:
     version: 9.5.0
 direct_dependencies:
 - cb_bsp
+- espressif/cjson
 - espressif/esp_lvgl_port
 - espressif/led_strip
 - idf
 - lvgl/lvgl
-manifest_hash: 21336095efa2622d46d753b6d0c72b5ea3772e8f0d97190acc188f71bc384dfa
+manifest_hash: 06c5a798458351d5cb604ca86a95ee06537228fbf871146c86880e4d0b8b15b3
 target: esp32s3
 version: 3.0.0

@@ -245,7 +245,14 @@ class TempRepoTest(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.root = Path(self._tmp.name) / "repo"
-        self._saved_env = {k: os.environ.get(k) for k in ("CB_BUILD_ROOT", "CB_FORCE_NO_PORTS", "CB_IDF_ACTIVATE")}
+        self._saved_env = {k: os.environ.get(k) for k in
+                           ("CB_BUILD_ROOT", "CB_FORCE_NO_PORTS", "CB_IDF_ACTIVATE", "CB_ARDUINO_CLI")}
+        # FakeRunner supplies tool output; discovery must not require real tools
+        # on the host running these unit tests.
+        for key, name in (("CB_IDF_ACTIVATE", "activate-idf.sh"), ("CB_ARDUINO_CLI", "arduino-cli")):
+            fixture = Path(self._tmp.name) / name
+            fixture.write_text("# fixture: execution is handled by FakeRunner\n", encoding="utf-8")
+            os.environ[key] = str(fixture)
 
     def tearDown(self) -> None:
         for key, value in self._saved_env.items():
